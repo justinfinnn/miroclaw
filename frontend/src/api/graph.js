@@ -68,3 +68,16 @@ export function getProject(projectId) {
     method: 'get'
   })
 }
+
+/**
+ * List all projects
+ * @param {number} limit - Maximum number of projects to return
+ * @returns {Promise}
+ */
+export function listProjects(limit = 20) {
+  return service({
+    url: '/api/graph/project/list',
+    method: 'get',
+    params: { limit }
+  })
+}

@@ -3,7 +3,7 @@ LLM Credential Store
 ====================
 Persistent, file-backed store for per-user / per-session OAuth credentials.
 
-This module provides the storage half of MiroFish's dual-auth design:
+This module provides the storage half of MiroClaw's dual-auth design:
 
     Mode A — API Key:
         Configured via environment variables (LLM_API_KEY, LLM_BASE_URL, etc.)
@@ -11,7 +11,7 @@ This module provides the storage half of MiroFish's dual-auth design:
 
     Mode B — OAuth / user-scoped token:
         Stored here (access_token + optional refresh_token), tagged by
-        credential_id (e.g. the logged-in MiroFish user id or "default_oauth").
+        credential_id (e.g. the logged-in MiroClaw user id or "default_oauth").
         Used for interactive, user-initiated LLM calls when no quota remains
         on the shared API key, or when the user has authenticated via
         OpenAI's OAuth flow.

@@ -2,9 +2,9 @@
   <div class="home-container">
     <!-- Top Navigation Bar -->
     <nav class="navbar" :style="s.navbar">
-      <div class="nav-brand" :style="s.navBrand">MIROFISH LOCAL</div>
+      <div class="nav-brand" :style="s.navBrand">MIROCLAW</div>
       <div class="nav-links" :style="s.navLinks">
-        <a href="https://github.com/justinfinnn/mirofish-local" target="_blank" class="github-link" :style="s.githubLink">
+        <a href="https://github.com/justinfinnn/miroclaw" target="_blank" class="github-link" :style="s.githubLink">
           GitHub <span>↗</span>
         </a>
       </div>
@@ -26,7 +26,7 @@
 
           <div class="hero-desc" :style="s.heroDesc">
             <p :style="s.heroDescP">
-              From a single document, <span :style="s.highlightBold">MiroFish Local</span> extracts reality seeds and builds a parallel world of <span :style="s.highlightOrange">autonomous AI agents</span>. Run offline with Ollama, use any OpenAI-compatible API, or connect via <span :style="s.highlightCode">Codex OAuth</span>. Inject variables, observe emergent behavior, and find <span :style="s.highlightCode">"local optima"</span> in complex social dynamics.
+              From a single document, <span :style="s.highlightBold">MiroClaw</span> extracts reality seeds and builds a parallel world of <span :style="s.highlightOrange">autonomous AI agents</span>. Run offline with Ollama, use any OpenAI-compatible API, or connect via <span :style="s.highlightCode">Codex OAuth</span>. Inject variables, observe emergent behavior, and find <span :style="s.highlightCode">"local optima"</span> in complex social dynamics.
             </p>
             <p class="slogan-text" :style="s.sloganText">
               Three modes. One engine. The future is simulated locally<span :style="s.blinkingCursor">_</span>
@@ -38,7 +38,7 @@
 
         <div class="hero-right" :style="s.heroRight">
           <div class="logo-container" :style="s.logoContainer">
-            <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" :style="s.heroLogo" />
+            <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroClaw Logo" :style="s.heroLogo" />
           </div>
           <button :style="s.scrollDownBtn" @click="scrollToBottom">↓</button>
         </div>
@@ -138,15 +138,50 @@
         </div>
       </section>
 
+      <!-- Recent Projects Section -->
+      <section class="recent-projects-section" :style="s.recentProjectsSection" v-if="recentProjects.length > 0">
+        <div class="section-header-row" :style="s.sectionHeaderRow">
+          <span :style="s.statusDot">■</span>
+          <span :style="s.sectionHeaderLabel">Recent Projects</span>
+          <span :style="s.projectCount">{{ recentProjects.length }} project{{ recentProjects.length !== 1 ? 's' : '' }}</span>
+        </div>
+        <div class="projects-grid" :style="s.projectsGrid">
+          <div
+            v-for="project in recentProjects"
+            :key="project.project_id || project.id"
+            class="project-row"
+            :style="s.projectRow"
+            @click="goToProject(project)"
+            @mouseenter="$event.currentTarget.style.borderColor = '#000'; $event.currentTarget.style.background = '#FAFAFA'"
+            @mouseleave="$event.currentTarget.style.borderColor = '#E5E5E5'; $event.currentTarget.style.background = '#fff'"
+          >
+            <div :style="s.projectRowLeft">
+              <div :style="s.projectName">{{ project.name || project.project_name || 'Untitled Project' }}</div>
+              <div :style="s.projectMeta">
+                <span v-if="project.created_at" :style="s.projectDate">{{ formatProjectDate(project.created_at) }}</span>
+                <span v-if="project.node_count || project.edge_count" :style="s.projectStats">
+                  {{ project.node_count || 0 }} nodes · {{ project.edge_count || 0 }} edges
+                </span>
+              </div>
+            </div>
+            <div :style="s.projectRowRight">
+              <span :style="getProjectStatusStyle(project.status)">{{ project.status || 'created' }}</span>
+              <span :style="s.projectArrow">→</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <HistoryDatabase />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
+import { listProjects } from '../api/graph'
 
 const mono = 'JetBrains Mono, monospace'
 const sans = 'Space Grotesk, Noto Sans SC, system-ui, sans-serif'
@@ -215,6 +250,20 @@ const s = reactive({
   modelBadge: { position: 'absolute', bottom: '10px', right: '15px', fontFamily: mono, fontSize: '0.7rem', color: '#AAA' },
   btnSection: { padding: '0 20px 20px' },
   startEngineBtn: { width: '100%', background: '#000', color: '#fff', border: 'none', padding: '20px', fontFamily: mono, fontWeight: '700', fontSize: '1.1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', letterSpacing: '1px' },
+  // Recent Projects styles
+  recentProjectsSection: { borderTop: '1px solid #E5E5E5', paddingTop: '40px', marginTop: '60px' },
+  sectionHeaderRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', fontFamily: mono, fontSize: '0.8rem', color: '#999' },
+  sectionHeaderLabel: { fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase' },
+  projectCount: { marginLeft: 'auto', fontSize: '0.75rem', color: '#BBB' },
+  projectsGrid: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  projectRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', border: '1px solid #E5E5E5', cursor: 'pointer', transition: 'all 0.2s ease', background: '#fff' },
+  projectRowLeft: { display: 'flex', flexDirection: 'column', gap: '4px', flex: '1' },
+  projectName: { fontWeight: '600', fontSize: '0.95rem', color: '#000' },
+  projectMeta: { display: 'flex', gap: '16px', fontFamily: mono, fontSize: '0.75rem', color: '#999' },
+  projectDate: {},
+  projectStats: { color: '#BBB' },
+  projectRowRight: { display: 'flex', alignItems: 'center', gap: '12px' },
+  projectArrow: { fontFamily: mono, fontSize: '1rem', color: '#CCC', transition: 'color 0.2s' },
 })
 
 const steps = [
@@ -261,6 +310,53 @@ const startSimulation = () => {
     router.push({ name: 'Process', params: { projectId: 'new' } })
   })
 }
+
+// Recent Projects
+const recentProjects = ref([])
+
+const loadRecentProjects = async () => {
+  try {
+    const response = await listProjects(10)
+    if (response.success && Array.isArray(response.data)) {
+      recentProjects.value = response.data
+    } else if (Array.isArray(response)) {
+      recentProjects.value = response
+    }
+  } catch (err) {
+    // API may not exist yet — fail silently
+    console.debug('Could not load recent projects:', err.message)
+    recentProjects.value = []
+  }
+}
+
+const goToProject = (project) => {
+  const id = project.project_id || project.id
+  if (id) {
+    router.push({ name: 'Process', params: { projectId: id } })
+  }
+}
+
+const formatProjectDate = (dateStr) => {
+  if (!dateStr) return ''
+  try {
+    const d = new Date(dateStr)
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  } catch { return '' }
+}
+
+const getProjectStatusStyle = (status) => {
+  const base = { fontFamily: mono, fontSize: '0.75rem', fontWeight: '600', padding: '3px 8px', letterSpacing: '0.5px' }
+  switch (status) {
+    case 'completed': return { ...base, color: '#10B981', background: 'rgba(16, 185, 129, 0.1)' }
+    case 'running': case 'processing': return { ...base, color: '#F59E0B', background: 'rgba(245, 158, 11, 0.1)' }
+    case 'failed': case 'error': return { ...base, color: '#EF4444', background: 'rgba(239, 68, 68, 0.1)' }
+    default: return { ...base, color: '#9CA3AF', background: '#F3F4F6' }
+  }
+}
+
+onMounted(() => {
+  loadRecentProjects()
+})
 </script>
 
 <!-- Styles loaded from Home.css via import -->

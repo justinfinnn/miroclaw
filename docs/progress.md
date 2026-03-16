@@ -1,4 +1,4 @@
-# MiroFish-Offline Migration Progress
+# MiroClaw Migration Progress
 
 ## Overview
 Migration from Zep Cloud + DashScope (Alibaba Qwen API) to local Neo4j CE + Ollama.

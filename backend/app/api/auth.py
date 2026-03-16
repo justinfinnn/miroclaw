@@ -651,7 +651,7 @@ def codex_status():
     Checks:
     - Whether OpenClaw is installed and has an openai-codex OAuth profile
     - Whether the token is valid and non-expired
-    - Whether the token is already synced into MiroFish's CredentialStore
+    - Whether the token is already synced into MiroClaw's CredentialStore
     - Whether MODELING_BACKEND=codex is active
 
     This is the primary diagnostic endpoint for Codex mode.
@@ -715,7 +715,7 @@ def codex_sync():
 
     return jsonify({
         "success": True,
-        "message": "OpenClaw Codex token synced into MiroFish CredentialStore",
+        "message": "OpenClaw Codex token synced into MiroClaw CredentialStore",
         "data": {
             "credential_id": cred.credential_id,
             "label": cred.label,

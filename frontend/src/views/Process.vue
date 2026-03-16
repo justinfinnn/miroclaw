@@ -2,7 +2,7 @@
   <div class="process-page">
     <!-- Top navigation bar -->
     <nav class="navbar">
-      <div class="nav-brand" @click="goHome">MIROFISH LOCAL</div>
+      <div class="nav-brand" @click="goHome">MIROCLAW</div>
       
       <!-- Center step indicator -->
       <div class="nav-center">

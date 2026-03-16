@@ -7,11 +7,11 @@ the OpenClaw Codex (ChatGPT OAuth) endpoint instead of api.openai.com/v1.
 WHY THIS EXISTS
 ---------------
 Graphiti's default OpenAIClient uses api.openai.com/v1 which requires
-a paid API platform credential.  In Codex mode, MiroFish uses an OpenAI
+a paid API platform credential.  In Codex mode, MiroClaw uses an OpenAI
 OAuth access token from OpenClaw that is only valid for the ChatGPT
 backend endpoint (chatgpt.com/backend-api/codex/responses).
 
-This client bridges Graphiti's abstract LLMClient interface to MiroFish's
+This client bridges Graphiti's abstract LLMClient interface to MiroClaw's
 CodexClient, enabling fully Codex-backed graph builds.
 
 RATE LIMITING STRATEGY
@@ -209,7 +209,7 @@ class GraphitiCodexLLMClient(_GraphitiLLMClient):  # type: ignore[misc]
     this class inherits from object and will raise ImportError on use.
 
     Subclasses Graphiti's LLMClient ABC and implements _generate_response()
-    to route calls through MiroFish's CodexClient (ChatGPT OAuth backend).
+    to route calls through MiroClaw's CodexClient (ChatGPT OAuth backend).
 
     The base class generate_response() / _generate_response_with_retry()
     machinery is bypassed: we override generate_response() directly to

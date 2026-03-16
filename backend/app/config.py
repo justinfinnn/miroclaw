@@ -1,7 +1,7 @@
 """
 Configuration — unified from .env
 
-MiroFish Local supports three execution modes:
+MiroClaw supports three execution modes:
 
   1. Ollama mode  (MODELING_BACKEND=ollama or api_key with Ollama URL)
      Fully offline. Uses local Ollama for LLM + embeddings.
@@ -30,7 +30,7 @@ class Config:
     """Flask configuration"""
 
     # Flask
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
+    SECRET_KEY = os.environ.get('SECRET_KEY', 'miroclaw-secret-key')
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     JSON_AS_ASCII = False
 

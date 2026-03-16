@@ -1,7 +1,7 @@
 services:
-  mirofish:
+  miroclaw:
     build: .
-    container_name: mirofish-local
+    container_name: miroclaw
     env_file:
       - .env
     ports:
@@ -19,7 +19,7 @@ services:
 
   neo4j:
     image: neo4j:5.15-community
-    container_name: mirofish-neo4j
+    container_name: miroclaw-neo4j
     ports:
       - "7474:7474"   # Neo4j Browser
       - "7687:7687"   # Bolt protocol
@@ -43,7 +43,7 @@ services:
   # Comment this service out if using api_key or codex mode.
   ollama:
     image: ollama/ollama:latest
-    container_name: mirofish-ollama
+    container_name: miroclaw-ollama
     ports:
       - "11434:11434"
     volumes:

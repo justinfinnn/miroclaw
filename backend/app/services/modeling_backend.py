@@ -1,7 +1,7 @@
 """
 Modeling Backend Selector
 =========================
-Central abstraction for choosing how MiroFish talks to the LLM.
+Central abstraction for choosing how MiroClaw talks to the LLM.
 
 Two modes are supported:
 

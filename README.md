@@ -1,9 +1,9 @@
-# MiroFish Local
+# MiroClaw
 
 **Local-first, multi-mode social simulation engine.** Upload a document, extract a knowledge graph, spawn autonomous AI agents, and simulate what happens next — all running locally or through your choice of LLM backend.
 
 <p align="center">
-  <img src="static/image/MiroFish_logo_compressed.jpeg" alt="MiroFish Logo" width="400" />
+  <img src="static/image/MiroFish_logo_compressed.jpeg" alt="MiroClaw Logo" width="400" />
 </p>
 
 ## Three Execution Modes
@@ -36,8 +36,8 @@
 
 ```bash
 # Clone the repo
-git clone https://github.com/justinfinnn/mirofish-local.git
-cd mirofish-local
+git clone https://github.com/justinfinnn/miroclaw.git
+cd miroclaw
 
 # Configure
 cp .env.example .env
@@ -47,8 +47,8 @@ cp .env.example .env
 docker compose up -d
 
 # Pull required Ollama models (first time only)
-docker exec mirofish-ollama ollama pull qwen2.5:32b
-docker exec mirofish-ollama ollama pull nomic-embed-text
+docker exec miroclaw-ollama ollama pull qwen2.5:32b
+docker exec miroclaw-ollama ollama pull nomic-embed-text
 
 # Open http://localhost:3000
 ```
@@ -57,8 +57,8 @@ docker exec mirofish-ollama ollama pull nomic-embed-text
 
 ```bash
 # Clone
-git clone https://github.com/justinfinnn/mirofish-local.git
-cd mirofish-local
+git clone https://github.com/justinfinnn/miroclaw.git
+cd miroclaw
 
 # Configure
 cp .env.example .env
@@ -168,12 +168,12 @@ Requires [OpenClaw](https://openclaw.com) with the `openai-codex` OAuth profile 
 
 This project combines work from two upstream repositories:
 
-- **[666ghj/MiroFish](https://github.com/666ghj/MiroFish)** — Original MiroFish project
-- **[nikmcfly/MiroFish-Offline](https://github.com/nikmcfly/MiroFish-Offline)** — English UI, Ollama support, GraphStorage abstraction, Docker Compose, EmbeddingService, NER extractor
+- **[666ghj/MiroFish](https://github.com/666ghj/MiroFish)** — Original MiroFish project (upstream)
+- **[nikmcfly/MiroFish-Offline](https://github.com/nikmcfly/MiroFish-Offline)** — English UI, Ollama support, GraphStorage abstraction, Docker Compose, EmbeddingService, NER extractor (upstream)
 
 ### What came from where
 
-**From MiroFish-Offline (base):**
+**From MiroFish-Offline (upstream base):**
 - Complete English frontend (1000+ translated strings)
 - GraphStorage abstraction + Neo4jStorage implementation
 - EmbeddingService (Ollama local embeddings)
@@ -183,7 +183,7 @@ This project combines work from two upstream repositories:
 - Docker Compose setup
 - All simulation/report/interaction workflows
 
-**From our fork (justinfinnn/MiroFish):**
+**From our fork (justinfinnn/miroclaw):**
 - CodexClient (ChatGPT backend SSE protocol)
 - OpenClaw bridge (auto-sync OAuth tokens)
 - ModelingBackendSelector (three-mode routing)

@@ -347,7 +347,7 @@ class OntologyGenerator:
     def generate_python_code(self, ontology: Dict[str, Any]) -> str:
         """
         [DEPRECATED] 将本体定义转换为Zep-format Pydantic代码。
-        Not used in MiroFish Local (ontology stored as JSON in Neo4j).
+        Not used in MiroClaw (ontology stored as JSON in Neo4j).
         Kept for reference only.
         """
         code_lines = [

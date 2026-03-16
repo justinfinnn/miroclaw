@@ -190,7 +190,7 @@ def _build_headers(token: str, account_id: str, session_id: Optional[str] = None
         "originator": "pi",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
-        "User-Agent": "MiroFish/1.0 (codex-client)",
+        "User-Agent": "MiroClaw/1.0 (codex-client)",
     }
     if session_id:
         headers["session_id"] = session_id

@@ -1,5 +1,5 @@
 """
-MiroFish Local — Flask application factory
+MiroClaw — Flask application factory
 
 Supports three execution modes:
   - ollama:  Fully offline with local Ollama LLM + embeddings
@@ -35,7 +35,7 @@ def create_app(config_class=Config):
 
     if should_log_startup:
         logger.info("=" * 50)
-        logger.info("MiroFish Local Backend starting...")
+        logger.info("MiroClaw Backend starting...")
         logger.info(f"  Modeling backend: {Config.MODELING_BACKEND}")
         logger.info(f"  LLM base URL:    {Config.LLM_BASE_URL}")
         logger.info(f"  LLM model:       {Config.LLM_MODEL_NAME}")
@@ -88,11 +88,11 @@ def create_app(config_class=Config):
     def health():
         return {
             'status': 'ok',
-            'service': 'MiroFish Local',
+            'service': 'MiroClaw',
             'modeling_backend': Config.MODELING_BACKEND,
         }
 
     if should_log_startup:
-        logger.info("MiroFish Local Backend started successfully")
+        logger.info("MiroClaw Backend started successfully")
 
     return app

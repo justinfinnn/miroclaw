@@ -1,5 +1,5 @@
 """
-MiroFish Local Storage Layer
+MiroClaw Storage Layer
 
 Local graph storage replacing Zep Cloud:
 - Neo4j CE for graph persistence
