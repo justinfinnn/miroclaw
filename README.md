@@ -1,10 +1,32 @@
-# MiroClaw
+<p align="center">
+  <img src="static/image/miroclaw-logo.png" alt="MiroClaw Logo" width="300" />
+</p>
 
-**Local-first, multi-mode social simulation engine.** Upload a document, extract a knowledge graph, spawn autonomous AI agents, and simulate what happens next — all running locally or through your choice of LLM backend.
+<h1 align="center">MiroClaw</h1>
 
 <p align="center">
-  <img src="static/image/MiroFish_logo_compressed.jpeg" alt="MiroClaw Logo" width="400" />
+  <strong>Local-first multi-agent simulation engine.</strong><br>
+  Upload a document. Extract a knowledge graph. Spawn AI agents. Simulate what happens next.
 </p>
+
+<p align="center">
+  <a href="#three-execution-modes">Three Modes</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#how-it-works">How It Works</a> •
+  <a href="#api-endpoints">API</a> •
+  <a href="#credits">Credits</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License" />
+  <img src="https://img.shields.io/badge/neo4j-5.x-green" alt="Neo4j" />
+  <img src="https://img.shields.io/badge/python-3.11+-yellow" alt="Python" />
+  <img src="https://img.shields.io/badge/vue-3-brightgreen" alt="Vue 3" />
+</p>
+
+---
+
+MiroClaw is a fork of [MiroFish](https://github.com/666ghj/MiroFish) that runs **entirely local** — no Zep Cloud, no mandatory API keys. Use your **Codex subscription**, an **API key**, or go fully offline with **Ollama**. Your choice.
 
 ## Three Execution Modes
 
