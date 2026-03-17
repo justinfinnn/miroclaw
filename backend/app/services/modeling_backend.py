@@ -3,68 +3,45 @@ Modeling Backend Selector
 =========================
 Central abstraction for choosing how MiroClaw talks to the LLM.
 
-Two modes are supported:
+Four modes are supported:
 
-    api_key  (default)
+    ollama   (default)
+        Local Ollama instance.  Fully offline.
+
+    api_key
         Uses a directly-configured API key (LLM_API_KEY + LLM_BASE_URL).
         Compatible with OpenAI, Alibaba DashScope, Azure OpenAI, and any
         OpenAI-SDK-compatible provider.
-        This is the stable, production-ready path.
 
-    codex    (implemented — OpenClaw Bridge + CodexClient)
+    codex
         Routes LLM calls through the OpenClaw openai-codex OAuth token,
-        using the correct ChatGPT backend endpoint.
+        using the ChatGPT backend endpoint via CodexClient.
 
-        ✅ IMPLEMENTATION STATUS (verified 2026-03-14):
-        ─────────────────────────────────────────────
-        • OpenClaw Bridge auto-discovery: IMPLEMENTED (openclaw_bridge.py).
-        • Token auto-sync on first resolve() call: IMPLEMENTED.
-        • CodexClient with correct endpoint: IMPLEMENTED (codex_client.py).
-          ↳ Endpoint: https://chatgpt.com/backend-api/codex/responses
-          ↳ Protocol: OpenAI Responses API (SSE stream)
-          ↳ Auth:     Bearer token + chatgpt-account-id (JWT-extracted)
-        • Token refresh via refresh_token: IMPLEMENTED (in bridge).
-        • /api/auth/codex/status endpoint: IMPLEMENTED.
-        • /api/auth/codex/sync endpoint: IMPLEMENTED.
-
-        WHY NOT api.openai.com/v1 (the old approach):
-        ──────────────────────────────────────────────
-        The Codex OAuth token is a ChatGPT backend session token, NOT an
-        OpenAI API platform credential.  Using it against api.openai.com/v1
-        always returns ``insufficient_quota`` because that endpoint requires
-        paid API billing credits, not ChatGPT OAuth.  The correct target is
-        chatgpt.com/backend-api/codex/responses (verified from OpenClaw
-        source: @mariozechner/pi-ai/dist/providers/openai-codex-responses.js).
+    openclaw   ← NEW
+        Reads ALL OpenClaw provider profiles from auth-profiles.json and
+        constructs the appropriate LLM client for the selected provider.
 
         ACTIVATION:
         ──────────
-        1. Log in with OpenAI/Codex via OpenClaw UI (one-time setup).
-        2. Set MODELING_BACKEND=codex in .env.
-        3. Restart the server.
+        1. Ensure OpenClaw is installed and has provider profiles configured.
+        2. Set MODELING_BACKEND=openclaw in .env.
+        3. Optionally set OPENCLAW_PROVIDER=anthropic (or openai, etc.)
+        4. Optionally set OPENCLAW_MODEL=claude-sonnet-4-6
+        5. Restart the server.
 
-        REMAINING TODO (future pass):
-        ─────────────────────────────
-        [ ] Full OAuth PKCE login/redirect flow in browser (blocked on OpenAI
-            publishing a public OAuth App registration for third-party apps).
-        [ ] Rate-limit and quota-check middleware before dispatching calls.
-        [ ] Adapt chat_json to send structured output instructions via
-            system prompt (Responses API does not support response_format).
+        Provider selection:
+        - OPENCLAW_PROVIDER env var selects which provider to use
+        - If not set, picks the first available provider
+        - openai-codex providers → CodexClient
+        - anthropic providers → Anthropic-native client (with OpenAI SDK fallback)
+        - All others → OpenAI-compatible SDK with correct base_url + api_key
 
 Usage
 -----
-    # Get a client for the currently configured backend:
     from app.services.modeling_backend import get_llm_client
 
     llm = get_llm_client()                   # uses MODELING_BACKEND env var
-    llm = get_llm_client(credential_id="u1") # resolve codex token for user u1
-
-    # codex mode returns a CodexClient (same .chat() / .chat_json() interface)
-    # api_key mode returns an LLMClient
-
-    # Or use the selector explicitly:
-    backend = ModelingBackendSelector.get()
-    print(backend.mode)          # "api_key" | "codex"
-    client = backend.build_client(credential_id="u1")
+    client = backend.build_client()
 """
 
 from __future__ import annotations
@@ -92,14 +69,14 @@ class ModelingBackend:
     Attributes
     ----------
     mode : str
-        "api_key" or "codex".
+        "api_key", "codex", "ollama", or "openclaw".
     """
 
     def __init__(self, mode: str) -> None:
-        if mode not in ("api_key", "codex", "ollama"):
+        if mode not in ("api_key", "codex", "ollama", "openclaw"):
             raise ValueError(
                 f"Unknown MODELING_BACKEND {mode!r}. "
-                "Valid values: 'api_key', 'codex', 'ollama'."
+                "Valid values: 'api_key', 'codex', 'ollama', 'openclaw'."
             )
         self.mode = mode
 
@@ -115,15 +92,17 @@ class ModelingBackend:
         ----------
         credential_id:
             When mode == "codex", the OAuth credential_id to look up.
-            If omitted in codex mode, falls back to the most-recently-stored
-            non-expired OAuth credential, then finally to api_key mode.
+            Ignored in api_key/ollama/openclaw modes.
 
         Returns
         -------
-        LLMClient ready to use.
+        LLMClient (or CodexClient or AnthropicLLMClient) ready to use.
         """
         if self.mode in ("api_key", "ollama"):
             return LLMClient()  # reads LLM_API_KEY / LLM_BASE_URL / LLM_MODEL_NAME
+
+        if self.mode == "openclaw":
+            return self._build_openclaw_client()
 
         # --- codex mode ---
         # Resolve the best available OAuth credential.
@@ -138,16 +117,11 @@ class ModelingBackend:
                 f"(credential={resolved.credential_id!r}, "
                 f"endpoint=chatgpt.com/backend-api/codex/responses)"
             )
-            # Use CodexClient: the Codex OAuth token targets the ChatGPT
-            # backend endpoint, NOT api.openai.com/v1.  Sending the token to
-            # api.openai.com/v1 always fails with insufficient_quota because
-            # it is a ChatGPT session token, not an API platform credential.
             return CodexClient(
                 access_token=resolved.api_key,
                 model=resolved.model or Config.CODEX_MODEL_NAME,
             )
         else:
-            # No valid OAuth token found; fell back to api_key
             logger.warning(
                 "[ModelingBackend] codex mode requested but no valid OAuth "
                 "token found. Falling back to api_key mode via LLMClient. "
@@ -155,6 +129,141 @@ class ModelingBackend:
                 "POST /api/auth/openai/credential."
             )
             return LLMClient.from_resolved(resolved)
+
+    # ------------------------------------------------------------------
+    # OpenClaw mode — multi-provider client construction
+    # ------------------------------------------------------------------
+
+    def _build_openclaw_client(self) -> LLMClient:
+        """
+        Build an LLM client using OpenClaw provider profiles.
+
+        Reads OPENCLAW_PROVIDER and OPENCLAW_MODEL from Config to determine
+        which provider and model to use.  Falls back gracefully.
+        """
+        from .openclaw_bridge import get_bridge
+        from .openclaw_provider_registry import get_provider_info
+
+        bridge = get_bridge()
+        providers = bridge.discover_providers()
+
+        if not providers:
+            logger.warning(
+                "[ModelingBackend] openclaw mode: no providers found in OpenClaw. "
+                "Falling back to api_key mode."
+            )
+            return LLMClient()
+
+        # Select the provider
+        target_provider = Config.OPENCLAW_PROVIDER
+        selected = None
+
+        if target_provider:
+            # Find the requested provider
+            for p in providers:
+                if p["provider"] == target_provider and p["has_credential"]:
+                    selected = p
+                    break
+            if selected is None:
+                available = [p["provider"] for p in providers if p["has_credential"]]
+                logger.warning(
+                    f"[ModelingBackend] openclaw mode: requested provider "
+                    f"{target_provider!r} not found or has no credential. "
+                    f"Available: {available}. Trying first available."
+                )
+
+        if selected is None:
+            # Pick the first provider with a credential
+            for p in providers:
+                if p["has_credential"]:
+                    selected = p
+                    break
+
+        if selected is None:
+            logger.error(
+                "[ModelingBackend] openclaw mode: no providers have valid credentials. "
+                "Falling back to api_key mode."
+            )
+            return LLMClient()
+
+        provider_name = selected["provider"]
+        credential = selected["credential"]
+        info = get_provider_info(provider_name)
+        model = Config.OPENCLAW_MODEL or info.default_model
+        compat_mode = info.compat_mode
+
+        logger.info(
+            f"[ModelingBackend] openclaw mode — provider={provider_name!r}, "
+            f"model={model!r}, compat_mode={compat_mode!r}"
+        )
+
+        # --- Route by compatibility mode ---
+
+        if compat_mode == "codex":
+            # openai-codex: use the existing CodexClient
+            return CodexClient(
+                access_token=credential,
+                model=model or Config.CODEX_MODEL_NAME,
+            )
+
+        if compat_mode == "anthropic":
+            return self._build_anthropic_client(credential, model)
+
+        if compat_mode == "openai" and info.base_url:
+            # Standard OpenAI-compatible provider
+            return LLMClient(
+                api_key=credential,
+                base_url=info.base_url,
+                model=model,
+            )
+
+        if info.base_url:
+            # Unknown compat mode but has a base_url — try OpenAI SDK
+            logger.info(
+                f"[ModelingBackend] openclaw mode: unknown compat_mode "
+                f"{compat_mode!r} for {provider_name!r}, attempting OpenAI SDK"
+            )
+            return LLMClient(
+                api_key=credential,
+                base_url=info.base_url,
+                model=model,
+            )
+
+        # No base_url and not a special mode — can't construct a client
+        logger.error(
+            f"[ModelingBackend] openclaw mode: provider {provider_name!r} has "
+            f"no base_url and compat_mode={compat_mode!r}. Cannot build client. "
+            f"Falling back to api_key mode."
+        )
+        return LLMClient()
+
+    @staticmethod
+    def _build_anthropic_client(api_key: str, model: str) -> LLMClient:
+        """
+        Build a client for the Anthropic provider.
+
+        Tries the native Anthropic SDK first (if installed), then falls back
+        to an OpenAI-compat wrapper.
+        """
+        try:
+            from ..utils.anthropic_client import AnthropicLLMClient
+            logger.info(
+                "[ModelingBackend] openclaw/anthropic: using native Anthropic SDK"
+            )
+            return AnthropicLLMClient(api_key=api_key, model=model)
+        except ImportError:
+            # anthropic SDK not installed — use OpenAI SDK against Anthropic's
+            # OpenAI-compatible endpoint (limited but functional)
+            logger.warning(
+                "[ModelingBackend] openclaw/anthropic: 'anthropic' package not "
+                "installed. Falling back to OpenAI SDK compatibility wrapper. "
+                "Install 'anthropic' for full support: pip install anthropic"
+            )
+            return LLMClient(
+                api_key=api_key,
+                base_url="https://api.anthropic.com/v1",
+                model=model,
+            )
 
     def __repr__(self) -> str:
         return f"ModelingBackend(mode={self.mode!r})"

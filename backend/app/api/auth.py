@@ -730,6 +730,132 @@ def codex_sync():
     })
 
 
+
+# ---------------------------------------------------------------------------
+# Routes — OpenClaw Provider Discovery
+# ---------------------------------------------------------------------------
+
+
+@auth_bp.route("/openclaw/providers", methods=["GET"])
+def openclaw_providers():
+    """
+    List all discovered OpenClaw provider profiles.
+
+    Returns each provider with:
+    - provider name and display name
+    - auth type (api_key, token, oauth)
+    - whether credentials are present
+    - available models and base URL
+    - compatibility mode (openai, codex, anthropic, unknown)
+
+    Credential values are NOT exposed in the response.
+
+    Query params (optional):
+        include_unsupported  bool  If true, include providers with no credentials.
+                                   Default: false (only show providers with credentials).
+    """
+    from ..services.openclaw_bridge import get_bridge
+
+    bridge = get_bridge()
+    providers = bridge.discover_providers()
+
+    include_unsupported = request.args.get("include_unsupported", "false").lower() == "true"
+
+    result = []
+    for p in providers:
+        if not include_unsupported and not p["has_credential"]:
+            continue
+
+        entry = {
+            "provider": p["provider"],
+            "profile_key": p["profile_key"],
+            "type": p["type"],
+            "has_credential": p["has_credential"],
+            "display_name": p["provider_info"]["display_name"],
+            "base_url": p["provider_info"]["base_url"],
+            "default_model": p["provider_info"]["default_model"],
+            "supported_models": p["provider_info"]["supported_models"],
+            "compat_mode": p["provider_info"]["compat_mode"],
+            "notes": p["provider_info"]["notes"],
+        }
+
+        # Add expiry info for OAuth tokens
+        if p.get("expires"):
+            import time
+            expires_at = p["expires"] / 1000 if p["expires"] > 1e12 else p["expires"]
+            entry["token_valid"] = time.time() < (expires_at - 60)
+            entry["expires_at"] = expires_at
+        else:
+            entry["token_valid"] = p["has_credential"]
+
+        result.append(entry)
+
+    # Show active selection
+    active_provider = Config.OPENCLAW_PROVIDER
+    active_model = Config.OPENCLAW_MODEL
+
+    return jsonify({
+        "success": True,
+        "data": {
+            "providers": result,
+            "total": len(result),
+            "active_backend": Config.MODELING_BACKEND,
+            "openclaw_config": {
+                "provider": active_provider or "(auto-detect)",
+                "model": active_model or "(provider default)",
+            },
+        },
+    })
+
+
+@auth_bp.route("/openclaw/status", methods=["GET"])
+def openclaw_status():
+    """
+    Return a diagnostic summary of the OpenClaw integration.
+
+    Combines provider discovery with bridge status for a complete picture.
+    """
+    from ..services.openclaw_bridge import get_bridge
+
+    bridge = get_bridge()
+    providers = bridge.discover_providers()
+    bridge_status = bridge.status()
+
+    available = [p["provider"] for p in providers if p["has_credential"]]
+    all_providers = [p["provider"] for p in providers]
+
+    return jsonify({
+        "success": True,
+        "data": {
+            "modeling_backend": Config.MODELING_BACKEND,
+            "openclaw_mode_active": Config.MODELING_BACKEND == "openclaw",
+            "openclaw_provider": Config.OPENCLAW_PROVIDER or "(auto-detect)",
+            "openclaw_model": Config.OPENCLAW_MODEL or "(provider default)",
+            "providers_discovered": all_providers,
+            "providers_with_credentials": available,
+            "bridge": bridge_status,
+            "recommendation": _openclaw_recommendation(providers),
+        },
+    })
+
+
+def _openclaw_recommendation(providers: list) -> str:
+    """Generate a human-readable recommendation based on discovered providers."""
+    available = [p for p in providers if p["has_credential"]]
+    if not available:
+        return (
+            "No OpenClaw provider profiles found. Ensure OpenClaw is installed "
+            "and you have configured at least one provider via the OpenClaw UI."
+        )
+    names = [p["provider"] for p in available]
+    if Config.MODELING_BACKEND == "openclaw":
+        return f"OpenClaw mode active. Available providers: {', '.join(names)}."
+    return (
+        f"Set MODELING_BACKEND=openclaw to use OpenClaw providers. "
+        f"Available: {', '.join(names)}."
+    )
+
+
 @auth_bp.route("/openai/resolve", methods=["POST"])
 def resolve_credential():
     """

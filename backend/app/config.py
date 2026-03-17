@@ -1,7 +1,7 @@
 """
 Configuration — unified from .env
 
-MiroClaw supports three execution modes:
+MiroClaw supports four execution modes:
 
   1. Ollama mode  (MODELING_BACKEND=ollama or api_key with Ollama URL)
      Fully offline. Uses local Ollama for LLM + embeddings.
@@ -12,6 +12,11 @@ MiroClaw supports three execution modes:
   3. Codex mode  (MODELING_BACKEND=codex)
      Uses OpenAI Codex OAuth token via ChatGPT backend.
      Requires OpenClaw with openai-codex OAuth login.
+
+  4. OpenClaw mode  (MODELING_BACKEND=openclaw)
+     Reads ALL provider profiles from OpenClaw's auth-profiles.json.
+     Supports any provider that OpenClaw has credentials for.
+     Set OPENCLAW_PROVIDER and OPENCLAW_MODEL to select which one.
 """
 
 import os
@@ -39,6 +44,7 @@ class Config:
     #   ollama   — local Ollama (default). LLM_API_KEY can be anything.
     #   api_key  — any OpenAI-compatible API with a real key.
     #   codex    — OpenAI Codex OAuth via OpenClaw bridge.
+    #   openclaw — any provider from OpenClaw's auth-profiles.json.
     #
     MODELING_BACKEND = os.environ.get('MODELING_BACKEND', 'ollama').strip().lower()
 
@@ -49,6 +55,13 @@ class Config:
 
     # Codex-mode model (separate default so Codex doesn't inherit a cheap model)
     CODEX_MODEL_NAME = os.environ.get('CODEX_MODEL_NAME', 'gpt-5.4')
+
+    # ===== OpenClaw Mode Configuration =====
+    # Which OpenClaw provider to use (e.g. anthropic, openai, google-gemini-cli)
+    # If not set, uses the first available provider with valid credentials.
+    OPENCLAW_PROVIDER = os.environ.get('OPENCLAW_PROVIDER', '').strip() or None
+    # Model override (if not set, uses the provider's default model)
+    OPENCLAW_MODEL = os.environ.get('OPENCLAW_MODEL', '').strip() or None
 
     # OAuth configuration (for future full OAuth PKCE flow)
     OPENAI_CLIENT_ID = os.environ.get('OPENAI_CLIENT_ID')
@@ -108,6 +121,14 @@ class Config:
             errors.append(
                 "LLM_API_KEY must be set (any non-empty value, e.g. 'ollama') "
                 "when MODELING_BACKEND=ollama."
+            )
+        elif cls.MODELING_BACKEND == 'openclaw':
+            import logging
+            logging.getLogger("mirofish.config").info(
+                "MODELING_BACKEND=openclaw — will read credentials from "
+                "OpenClaw auth-profiles.json at startup. "
+                f"Provider: {cls.OPENCLAW_PROVIDER or '(auto-detect)'}, "
+                f"Model: {cls.OPENCLAW_MODEL or '(provider default)'}"
             )
         elif cls.MODELING_BACKEND == 'codex' and not cls.LLM_API_KEY:
             import logging

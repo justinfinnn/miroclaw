@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#three-execution-modes">Three Modes</a> •
+  <a href="#four-execution-modes">Four Modes</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#how-it-works">How It Works</a> •
   <a href="#api-endpoints">API</a> •
@@ -26,15 +26,16 @@
 
 ---
 
-MiroClaw is a fork of [MiroFish](https://github.com/666ghj/MiroFish) that runs **entirely local** — no Zep Cloud, no mandatory API keys. Use your **Codex subscription**, an **API key**, or go fully offline with **Ollama**. Your choice.
+MiroClaw is a fork of [MiroFish](https://github.com/666ghj/MiroFish) that runs **entirely local** — no Zep Cloud, no mandatory API keys. Use your **Codex subscription**, an **API key**, **any OpenClaw provider**, or go fully offline with **Ollama**. Your choice.
 
-## Three Execution Modes
+## Four Execution Modes
 
 | Mode | Backend | Use Case |
 |------|---------|----------|
 | **Ollama** (default) | Local Ollama + Neo4j | Fully offline, no API keys, total privacy |
 | **API Key** | Any OpenAI-compatible API | Use OpenAI, Azure, DashScope, or any provider |
 | **Codex** | OpenAI Codex via ChatGPT OAuth | Free-tier access through OpenClaw bridge |
+| **OpenClaw** | Any OpenClaw provider | Use any model configured in OpenClaw (Anthropic, OpenAI, Gemini, etc.) |
 
 ## How It Works
 

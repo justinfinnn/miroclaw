@@ -1,50 +1,47 @@
 """
 OpenClaw Bridge
 ===============
-Reads the local OpenClaw credential store and imports the ``openai-codex``
-OAuth access token into MiroFish's CredentialStore.
+Reads the local OpenClaw credential store and provides access to ALL
+configured provider profiles — not just openai-codex.
 
-This enables MODELING_BACKEND=codex to work automatically on a machine where
-OpenClaw is installed and the user has logged in via the OpenClaw UI.
+Supports two usage patterns:
+
+  1. **Legacy Codex sync** (``sync()`` / ``auto_sync_if_needed()``):
+     Imports the openai-codex OAuth token into MiroFish's CredentialStore.
+     Used when MODELING_BACKEND=codex.
+
+  2. **Full provider discovery** (``discover_providers()``):
+     Reads ALL provider profiles from auth-profiles.json and returns
+     structured metadata + credentials for each.  Used when
+     MODELING_BACKEND=openclaw.
 
 How it works
 ------------
 1. Locate the OpenClaw auth-profiles.json for the running agent (or discover
    via OPENCLAW_AGENT env var or a default search path).
-2. Read the ``openai-codex:default`` profile's ``access`` token and ``expires``
-   timestamp.
-3. Optionally: refresh the token via the ``refresh`` token stored there,
-   using OpenAI's token refresh endpoint.
-4. Upsert the token into MiroFish's CredentialStore under the canonical
-   credential_id ``"openclaw_codex"``.
-
-The bridge is called lazily from CredentialStore.resolve() when
-MODELING_BACKEND=codex and no other OAuth token is available.
-
-CREDENTIAL_ID used
-------------------
-``openclaw_codex``  — identifies tokens that originated from OpenClaw's
-                      openai-codex OAuth profile.
+2. Parse all profile entries — each has a provider name, auth type
+   (api_key / token / oauth), and credentials.
+3. For codex mode: extract the openai-codex token specifically.
+4. For openclaw mode: return all providers with their credentials.
 
 Security note
 -------------
-The auth-profiles.json file contains an access_token in plaintext.  This
-bridge reads it with the same trust level as any other local-file secret.
-The file is owned by the OpenClaw process and lives in the user's home
-directory under ~/.openclaw/agents/<agent_name>/agent/.
+The auth-profiles.json file contains credentials in plaintext.  This
+bridge reads them with the same trust level as any other local-file secret.
 
 Usage
 -----
     from app.services.openclaw_bridge import OpenClawBridge
 
-    # Import from OpenClaw profile if available:
     bridge = OpenClawBridge()
-    cred = bridge.sync()            # returns OAuthCredential or None
-    if cred:
-        print("synced", cred.credential_id, "expires_at", cred.expires_at)
 
-    # Check status:
-    status = bridge.status()        # returns dict with diagnostics
+    # Discover all providers:
+    providers = bridge.discover_providers()
+    for p in providers:
+        print(p["provider"], p["type"], p["has_credential"])
+
+    # Legacy codex sync:
+    cred = bridge.sync()
 """
 
 from __future__ import annotations
@@ -87,17 +84,15 @@ class OpenClawBridge:
 
     def _find_profiles_file(self) -> Optional[Path]:
         """
-        Locate the OpenClaw auth-profiles.json that contains the
-        ``openai-codex:default`` profile.
+        Locate the OpenClaw auth-profiles.json.
 
         Search order:
         1. OPENCLAW_AGENT_PROFILES env var (explicit override).
         2. Standard per-agent path: ~/.openclaw/agents/<OPENCLAW_AGENT>/agent/auth-profiles.json
            where OPENCLAW_AGENT is read from the environment.
-        3. Walk all ~/.openclaw/agents/*/agent/auth-profiles.json and pick the
-           first one that has an openai-codex profile.
-        4. ~/.openclaw/agents/backend-architect/agent/auth-profiles.json
-           (the agent that typically runs MiroFish tasks in this repo).
+        3. Known default: backend-architect agent.
+        4. Walk all ~/.openclaw/agents/*/agent/auth-profiles.json and pick the
+           first one that has any profiles.
         """
         # --- 1. Explicit override ---
         explicit = os.environ.get("OPENCLAW_AGENT_PROFILES")
@@ -114,18 +109,28 @@ class OpenClawBridge:
             if candidate.exists():
                 return candidate
 
-        # --- 4. Known default: backend-architect (used for MiroFish work) ---
+        # --- 3. Known default: backend-architect (used for MiroFish work) ---
         known = agents_dir / "backend-architect" / "agent" / "auth-profiles.json"
-        if known.exists() and self._has_codex_profile(known):
+        if known.exists() and self._has_profiles(known):
             return known
 
-        # --- 3. Walk all agents ---
+        # --- 4. Walk all agents ---
         if agents_dir.is_dir():
             for candidate in sorted(agents_dir.glob("*/agent/auth-profiles.json")):
-                if self._has_codex_profile(candidate):
+                if self._has_profiles(candidate):
                     return candidate
 
         return None
+
+    @staticmethod
+    def _has_profiles(path: Path) -> bool:
+        """Return True if the profiles file has any profile entries."""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            profiles = data.get("profiles", {})
+            return len(profiles) > 0
+        except Exception:
+            return False
 
     @staticmethod
     def _has_codex_profile(path: Path) -> bool:
@@ -203,7 +208,81 @@ class OpenClawBridge:
         return None
 
     # ------------------------------------------------------------------
-    # Public API
+    # Provider discovery (openclaw mode)
+    # ------------------------------------------------------------------
+
+    def discover_providers(self) -> list:
+        """
+        Discover ALL providers configured in OpenClaw's auth-profiles.json.
+
+        Returns a list of dicts, each with:
+            - profile_key: str  (e.g. "anthropic:manual", "openai-codex:default")
+            - provider: str     (e.g. "anthropic", "openai-codex")
+            - type: str         (e.g. "api_key", "token", "oauth")
+            - has_credential: bool
+            - credential: str | None  (the actual API key / token — kept in memory only)
+            - provider_info: dict     (from the provider registry)
+            - expires: float | None   (for OAuth tokens)
+            - account_id: str | None  (for OAuth tokens)
+        """
+        from .openclaw_provider_registry import (
+            extract_credential,
+            get_provider_info,
+        )
+
+        data = self._load_profiles()
+        if data is None:
+            logger.debug("[OpenClawBridge] No profiles found for provider discovery")
+            return []
+
+        profiles = data.get("profiles", {})
+        result = []
+
+        for profile_key, profile in profiles.items():
+            provider_name = profile.get("provider", profile_key.split(":")[0])
+            auth_type = profile.get("type", "unknown")
+            credential = extract_credential(profile)
+            info = get_provider_info(provider_name)
+
+            entry = {
+                "profile_key": profile_key,
+                "provider": provider_name,
+                "type": auth_type,
+                "has_credential": credential is not None and len(credential) > 0,
+                "credential": credential,
+                "provider_info": {
+                    "display_name": info.display_name,
+                    "base_url": info.base_url,
+                    "default_model": info.default_model,
+                    "compat_mode": info.compat_mode,
+                    "supported_models": info.supported_models,
+                    "notes": info.notes,
+                },
+                "expires": profile.get("expires"),
+                "account_id": profile.get("accountId"),
+            }
+            result.append(entry)
+
+        logger.info(
+            f"[OpenClawBridge] Discovered {len(result)} provider(s): "
+            f"{[r['provider'] for r in result]}"
+        )
+        return result
+
+    def get_provider_credential(self, provider_name: str) -> Optional[dict]:
+        """
+        Get credential info for a specific provider.
+
+        Returns the first matching provider entry from discover_providers(),
+        or None if not found.
+        """
+        for entry in self.discover_providers():
+            if entry["provider"] == provider_name:
+                return entry
+        return None
+
+    # ------------------------------------------------------------------
+    # Public API — Legacy codex sync
     # ------------------------------------------------------------------
 
     def sync(self, *, auto_refresh: bool = True) -> "Optional[OAuthCredential]":

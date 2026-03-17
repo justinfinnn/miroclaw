@@ -1,10 +1,11 @@
 """
 MiroClaw — Flask application factory
 
-Supports three execution modes:
-  - ollama:  Fully offline with local Ollama LLM + embeddings
-  - api_key: Any OpenAI-compatible API
-  - codex:   OpenAI Codex OAuth via OpenClaw bridge
+Supports four execution modes:
+  - ollama:   Fully offline with local Ollama LLM + embeddings
+  - api_key:  Any OpenAI-compatible API
+  - codex:    OpenAI Codex OAuth via OpenClaw bridge
+  - openclaw: Any provider from OpenClaw's auth-profiles.json
 """
 
 import os
@@ -39,6 +40,9 @@ def create_app(config_class=Config):
         logger.info(f"  Modeling backend: {Config.MODELING_BACKEND}")
         logger.info(f"  LLM base URL:    {Config.LLM_BASE_URL}")
         logger.info(f"  LLM model:       {Config.LLM_MODEL_NAME}")
+        if Config.MODELING_BACKEND == "openclaw":
+            logger.info(f"  OpenClaw provider: {Config.OPENCLAW_PROVIDER or '(auto-detect)'}")
+            logger.info(f"  OpenClaw model:    {Config.OPENCLAW_MODEL or '(provider default)'}")
         logger.info(f"  Neo4j:           {Config.NEO4J_URI}")
         logger.info("=" * 50)
 
