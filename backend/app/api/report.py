@@ -11,12 +11,137 @@ from flask import request, jsonify, send_file
 from . import report_bp
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
+from ..services.cancellation import OperationCanceledError
 from ..services.simulation_manager import SimulationManager
 from ..models.project import ProjectManager
 from ..models.task import TaskManager, TaskStatus
 from ..utils.logger import get_logger
 
 logger = get_logger('mirofish.api.report')
+
+_report_cancel_lock = threading.Lock()
+_report_cancel_events_by_task = {}
+_report_cancel_events_by_report = {}
+_report_cancel_events_by_simulation = {}
+
+
+def _register_report_cancel_event(
+    task_id: str,
+    report_id: str,
+    simulation_id: str,
+    cancel_event: threading.Event,
+) -> None:
+    with _report_cancel_lock:
+        _report_cancel_events_by_task[task_id] = {
+            "report_id": report_id,
+            "simulation_id": simulation_id,
+            "event": cancel_event,
+        }
+        _report_cancel_events_by_report[report_id] = {
+            "task_id": task_id,
+            "simulation_id": simulation_id,
+            "event": cancel_event,
+        }
+        _report_cancel_events_by_simulation[simulation_id] = {
+            "task_id": task_id,
+            "report_id": report_id,
+            "event": cancel_event,
+        }
+
+
+def _get_report_cancel_entry(task_id: str = None, report_id: str = None, simulation_id: str = None):
+    with _report_cancel_lock:
+        if task_id and task_id in _report_cancel_events_by_task:
+            entry = _report_cancel_events_by_task[task_id]
+            return {
+                "task_id": task_id,
+                "report_id": entry["report_id"],
+                "simulation_id": entry["simulation_id"],
+                "event": entry["event"],
+            }
+        if report_id and report_id in _report_cancel_events_by_report:
+            entry = _report_cancel_events_by_report[report_id]
+            return {
+                "task_id": entry["task_id"],
+                "report_id": report_id,
+                "simulation_id": entry["simulation_id"],
+                "event": entry["event"],
+            }
+        if simulation_id and simulation_id in _report_cancel_events_by_simulation:
+            entry = _report_cancel_events_by_simulation[simulation_id]
+            return {
+                "task_id": entry["task_id"],
+                "report_id": entry["report_id"],
+                "simulation_id": simulation_id,
+                "event": entry["event"],
+            }
+    return None
+
+
+def _clear_report_cancel_event(task_id: str = None, report_id: str = None, simulation_id: str = None) -> None:
+    with _report_cancel_lock:
+        resolved_task_id = task_id
+        resolved_report_id = report_id
+        resolved_simulation_id = simulation_id
+
+        if resolved_task_id and not resolved_report_id:
+            entry = _report_cancel_events_by_task.get(resolved_task_id)
+            if entry:
+                resolved_report_id = entry["report_id"]
+                resolved_simulation_id = resolved_simulation_id or entry["simulation_id"]
+
+        if resolved_report_id and not resolved_task_id:
+            entry = _report_cancel_events_by_report.get(resolved_report_id)
+            if entry:
+                resolved_task_id = entry["task_id"]
+                resolved_simulation_id = resolved_simulation_id or entry["simulation_id"]
+
+        if resolved_simulation_id and (not resolved_task_id or not resolved_report_id):
+            entry = _report_cancel_events_by_simulation.get(resolved_simulation_id)
+            if entry:
+                resolved_task_id = resolved_task_id or entry["task_id"]
+                resolved_report_id = resolved_report_id or entry["report_id"]
+
+        if resolved_task_id:
+            _report_cancel_events_by_task.pop(resolved_task_id, None)
+        if resolved_report_id:
+            _report_cancel_events_by_report.pop(resolved_report_id, None)
+        if resolved_simulation_id:
+            _report_cancel_events_by_simulation.pop(resolved_simulation_id, None)
+
+
+def _request_payload() -> dict:
+    if request.method == 'GET':
+        return request.args.to_dict()
+    return request.get_json(silent=True) or {}
+
+
+def _find_report_task(
+    task_manager: TaskManager,
+    *,
+    task_id: str = None,
+    report_id: str = None,
+    simulation_id: str = None,
+    allowed_statuses=None,
+):
+    if task_id:
+        task = task_manager.get_task(task_id)
+        if task and task.task_type == "report_generate":
+            return task
+        return None
+
+    allowed = set(allowed_statuses or [])
+    tasks = task_manager.list_tasks(task_type="report_generate")
+    for task_dict in tasks:
+        metadata = task_dict.get("metadata") or {}
+        status = task_dict.get("status")
+        if allowed and status not in allowed:
+            continue
+        if report_id and metadata.get("report_id") == report_id:
+            return task_manager.get_task(task_dict["task_id"])
+        if simulation_id and metadata.get("simulation_id") == simulation_id:
+            return task_manager.get_task(task_dict["task_id"])
+    return None
 
 
 # ============== 报告生成接口 ==============
@@ -53,10 +178,12 @@ def generate_report():
         if not simulation_id:
             return jsonify({
                 "success": False,
-                "error": "请提供 simulation_id"
+                "error": "Please provide simulation_id"
             }), 400
         
         force_regenerate = data.get('force_regenerate', False)
+        requested_report_id = data.get('report_id')
+        resume_existing = bool(data.get('resume_existing'))
         
         # 获取模拟信息
         manager = SimulationManager()
@@ -65,12 +192,33 @@ def generate_report():
         if not state:
             return jsonify({
                 "success": False,
-                "error": f"模拟不存在: {simulation_id}"
+                "error": f"Simulation not found: {simulation_id}"
             }), 404
         
+        existing_report = ReportManager.get_report_by_simulation(simulation_id)
+
+        task_manager = TaskManager()
+        active_task = _find_report_task(
+            task_manager,
+            simulation_id=simulation_id,
+            allowed_statuses=[TaskStatus.PENDING.value, TaskStatus.PROCESSING.value],
+        )
+        if active_task:
+            return jsonify({
+                "success": True,
+                "data": {
+                    "simulation_id": simulation_id,
+                    "report_id": active_task.metadata.get("report_id"),
+                    "task_id": active_task.task_id,
+                    "status": active_task.status.value,
+                    "message": active_task.message or "Report generation is already in progress.",
+                    "already_running": True,
+                    "already_generated": False,
+                }
+            })
+
         # 检查是否已有报告
         if not force_regenerate:
-            existing_report = ReportManager.get_report_by_simulation(simulation_id)
             if existing_report and existing_report.status == ReportStatus.COMPLETED:
                 return jsonify({
                     "success": True,
@@ -78,7 +226,7 @@ def generate_report():
                         "simulation_id": simulation_id,
                         "report_id": existing_report.report_id,
                         "status": "completed",
-                        "message": "报告已存在",
+                        "message": "Report already exists",
                         "already_generated": True
                     }
                 })
@@ -88,37 +236,68 @@ def generate_report():
         if not project:
             return jsonify({
                 "success": False,
-                "error": f"项目不存在: {state.project_id}"
+                "error": f"Project not found: {state.project_id}"
             }), 404
         
         graph_id = state.graph_id or project.graph_id
         if not graph_id:
             return jsonify({
                 "success": False,
-                "error": "缺少图谱ID，请确保已构建图谱"
+                "error": "Missing graph ID. Make sure the graph has been built."
             }), 400
         
         simulation_requirement = project.simulation_requirement
         if not simulation_requirement:
             return jsonify({
                 "success": False,
-                "error": "缺少模拟需求描述"
+                "error": "Missing simulation requirement"
             }), 400
         
-        # 提前生成 report_id，以便立即返回给前端
         import uuid
-        report_id = f"report_{uuid.uuid4().hex[:12]}"
+        report_to_resume = None
+        if resume_existing:
+            if requested_report_id:
+                report_to_resume = ReportManager.get_report(requested_report_id)
+                if not report_to_resume:
+                    return jsonify({
+                        "success": False,
+                        "error": f"Report not found: {requested_report_id}"
+                    }), 404
+                if report_to_resume.simulation_id != simulation_id:
+                    return jsonify({
+                        "success": False,
+                        "error": "The requested report does not belong to this simulation."
+                    }), 400
+            else:
+                report_to_resume = existing_report
+
+            if report_to_resume and report_to_resume.status == ReportStatus.COMPLETED:
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "report_id": report_to_resume.report_id,
+                        "status": "completed",
+                        "message": "Report already exists",
+                        "already_generated": True
+                    }
+                })
+
+        should_resume = report_to_resume is not None
+        report_id = report_to_resume.report_id if should_resume else f"report_{uuid.uuid4().hex[:12]}"
         
         # 创建异步任务
-        task_manager = TaskManager()
         task_id = task_manager.create_task(
             task_type="report_generate",
             metadata={
                 "simulation_id": simulation_id,
                 "graph_id": graph_id,
-                "report_id": report_id
+                "report_id": report_id,
+                "resume_existing": should_resume,
             }
         )
+        cancel_event = threading.Event()
+        _register_report_cancel_event(task_id, report_id, simulation_id, cancel_event)
         
         # 定义后台任务
         def run_generate():
@@ -127,7 +306,7 @@ def generate_report():
                     task_id,
                     status=TaskStatus.PROCESSING,
                     progress=0,
-                    message="初始化Report Agent..."
+                    message="Resuming Report Agent..." if should_resume else "Initializing Report Agent..."
                 )
                 
                 # 创建Report Agent
@@ -148,7 +327,9 @@ def generate_report():
                 # 生成报告（传入预先生成的 report_id）
                 report = agent.generate_report(
                     progress_callback=progress_callback,
-                    report_id=report_id
+                    report_id=report_id,
+                    cancel_event=cancel_event,
+                    resume_existing=should_resume,
                 )
                 
                 # 保存报告
@@ -163,12 +344,37 @@ def generate_report():
                             "status": "completed"
                         }
                     )
+                elif report.status == ReportStatus.CANCELED:
+                    task_manager.cancel_task(
+                        task_id,
+                        message="Report generation canceled. The current work unit has stopped."
+                    )
+                    task_manager.update_task(
+                        task_id,
+                        result={
+                            "report_id": report.report_id,
+                            "simulation_id": simulation_id,
+                            "status": "canceled"
+                        }
+                    )
                 else:
-                    task_manager.fail_task(task_id, report.error or "报告生成失败")
+                    task_manager.fail_task(task_id, report.error or "Report generation failed")
                 
+            except OperationCanceledError as e:
+                logger.info("Report generation canceled: %s", str(e))
+                task_manager.cancel_task(
+                    task_id,
+                    message=str(e) or "Report generation canceled."
+                )
             except Exception as e:
-                logger.error(f"报告生成失败: {str(e)}")
+                logger.error("Report generation failed: %s", str(e))
                 task_manager.fail_task(task_id, str(e))
+            finally:
+                _clear_report_cancel_event(
+                    task_id=task_id,
+                    report_id=report_id,
+                    simulation_id=simulation_id,
+                )
         
         # 启动后台线程
         thread = threading.Thread(target=run_generate, daemon=True)
@@ -181,13 +387,17 @@ def generate_report():
                 "report_id": report_id,
                 "task_id": task_id,
                 "status": "generating",
-                "message": "报告生成任务已启动，请通过 /api/report/generate/status 查询进度",
+                "message": (
+                    "Report generation resumed. Check progress via /api/report/generate/status."
+                    if should_resume
+                    else "Report generation started. Check progress via /api/report/generate/status."
+                ),
                 "already_generated": False
             }
         })
         
     except Exception as e:
-        logger.error(f"启动报告生成任务失败: {str(e)}")
+        logger.error("Failed to start report generation: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -195,7 +405,7 @@ def generate_report():
         }), 500
 
 
-@report_bp.route('/generate/status', methods=['POST'])
+@report_bp.route('/generate/status', methods=['GET', 'POST'])
 def get_generate_status():
     """
     查询报告生成任务进度
@@ -218,52 +428,196 @@ def get_generate_status():
         }
     """
     try:
-        data = request.get_json() or {}
+        data = _request_payload()
         
         task_id = data.get('task_id')
+        report_id = data.get('report_id')
         simulation_id = data.get('simulation_id')
-        
-        # 如果提供了simulation_id，先检查是否已有完成的报告
-        if simulation_id:
-            existing_report = ReportManager.get_report_by_simulation(simulation_id)
-            if existing_report and existing_report.status == ReportStatus.COMPLETED:
-                return jsonify({
-                    "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "report_id": existing_report.report_id,
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "报告已生成",
-                        "already_completed": True
-                    }
-                })
-        
-        if not task_id:
-            return jsonify({
-                "success": False,
-                "error": "请提供 task_id 或 simulation_id"
-            }), 400
-        
+
         task_manager = TaskManager()
-        task = task_manager.get_task(task_id)
+
+        task = _find_report_task(
+            task_manager,
+            task_id=task_id,
+            report_id=report_id,
+            simulation_id=simulation_id,
+            allowed_statuses={
+                TaskStatus.PENDING.value,
+                TaskStatus.PROCESSING.value,
+                TaskStatus.COMPLETED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.CANCELED.value,
+            },
+        )
+        if task:
+            task_dict = task.to_dict()
+            metadata = task.metadata or {}
+            task_dict["report_id"] = metadata.get("report_id")
+            task_dict["simulation_id"] = metadata.get("simulation_id")
+            return jsonify({
+                "success": True,
+                "data": task_dict
+            })
         
-        if not task:
+        report = None
+        if report_id:
+            report = ReportManager.get_report(report_id)
+            if report and not simulation_id:
+                simulation_id = report.simulation_id
+        elif simulation_id:
+            report = ReportManager.get_report_by_simulation(simulation_id)
+            if report:
+                report_id = report.report_id
+
+        if report:
+            progress = ReportManager.get_progress(report.report_id) or {}
+            status_value = report.status.value
+            progress_value = progress.get("progress")
+            if progress_value is None:
+                progress_value = 100 if report.status == ReportStatus.COMPLETED else 0
+
+            return jsonify({
+                "success": True,
+                "data": {
+                    "task_id": None,
+                    "report_id": report.report_id,
+                    "simulation_id": report.simulation_id,
+                    "status": status_value,
+                    "progress": progress_value,
+                    "message": progress.get("message") or (
+                        "Report already generated"
+                        if report.status == ReportStatus.COMPLETED
+                        else report.error
+                        or f"Report status: {status_value}"
+                    ),
+                    "already_completed": report.status == ReportStatus.COMPLETED,
+                }
+            })
+
+        if not task_id and not report_id and not simulation_id:
             return jsonify({
                 "success": False,
-                "error": f"任务不存在: {task_id}"
-            }), 404
-        
+                "error": "Please provide task_id, report_id, or simulation_id"
+            }), 400
+
         return jsonify({
-            "success": True,
-            "data": task.to_dict()
-        })
+            "success": False,
+            "error": "No report generation task or report was found for this request."
+        }), 404
         
     except Exception as e:
-        logger.error(f"查询任务状态失败: {str(e)}")
+        logger.error("Failed to query task status: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e)
+        }), 500
+
+
+@report_bp.route('/generate/cancel', methods=['POST'])
+def cancel_generate_report():
+    """Request cooperative cancellation for an active report generation task."""
+    try:
+        data = request.get_json() or {}
+        task_id = data.get('task_id')
+        report_id = data.get('report_id')
+        simulation_id = data.get('simulation_id')
+
+        if not task_id and not report_id and not simulation_id:
+            return jsonify({
+                "success": False,
+                "error": "Please provide task_id, report_id, or simulation_id"
+            }), 400
+
+        task_manager = TaskManager()
+        task = _find_report_task(
+            task_manager,
+            task_id=task_id,
+            report_id=report_id,
+            simulation_id=simulation_id,
+            allowed_statuses={
+                TaskStatus.PENDING.value,
+                TaskStatus.PROCESSING.value,
+                TaskStatus.CANCELED.value,
+                TaskStatus.COMPLETED.value,
+                TaskStatus.FAILED.value,
+            },
+        )
+
+        if task:
+            metadata = task.metadata or {}
+            task_id = task.task_id
+            report_id = report_id or metadata.get("report_id")
+            simulation_id = simulation_id or metadata.get("simulation_id")
+
+        entry = _get_report_cancel_entry(
+            task_id=task_id,
+            report_id=report_id,
+            simulation_id=simulation_id,
+        )
+
+        if entry is None:
+            report = ReportManager.get_report(report_id) if report_id else None
+            if report is None and simulation_id:
+                report = ReportManager.get_report_by_simulation(simulation_id)
+
+            if report and report.status == ReportStatus.CANCELED:
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "task_id": task_id,
+                        "report_id": report.report_id,
+                        "simulation_id": report.simulation_id,
+                        "status": ReportStatus.CANCELED.value,
+                        "message": report.error or "Report generation was already canceled."
+                    }
+                })
+
+            if task and task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED):
+                return jsonify({
+                    "success": False,
+                    "error": f"Report task is already {task.status.value}."
+                }), 400
+
+            return jsonify({
+                "success": False,
+                "error": "No active report generation task was found for this request."
+            }), 404
+
+        if entry["event"].is_set():
+            return jsonify({
+                "success": True,
+                "data": {
+                    "task_id": entry["task_id"],
+                    "report_id": entry["report_id"],
+                    "simulation_id": entry["simulation_id"],
+                    "status": "cancel_requested",
+                    "message": "Cancellation was already requested. Waiting for the current section to stop."
+                }
+            })
+
+        entry["event"].set()
+        task_manager.update_task(
+            entry["task_id"],
+            message="Cancellation requested. Waiting for the current section to stop."
+        )
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "task_id": entry["task_id"],
+                "report_id": entry["report_id"],
+                "simulation_id": entry["simulation_id"],
+                "status": "cancel_requested",
+                "message": "Cancellation requested. Poll /api/report/generate/status until the task reports canceled."
+            }
+        })
+
+    except Exception as e:
+        logger.error("Failed to cancel report generation: %s", str(e))
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }), 500
 
 
@@ -294,7 +648,7 @@ def get_report(report_id: str):
         if not report:
             return jsonify({
                 "success": False,
-                "error": f"报告不存在: {report_id}"
+                "error": f"Report not found: {report_id}"
             }), 404
         
         return jsonify({
@@ -303,7 +657,7 @@ def get_report(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取报告失败: {str(e)}")
+        logger.error("Failed to fetch report: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -331,7 +685,7 @@ def get_report_by_simulation(simulation_id: str):
         if not report:
             return jsonify({
                 "success": False,
-                "error": f"该模拟暂无报告: {simulation_id}",
+                "error": f"No report exists yet for simulation: {simulation_id}",
                 "has_report": False
             }), 404
         
@@ -342,7 +696,7 @@ def get_report_by_simulation(simulation_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取报告失败: {str(e)}")
+        logger.error("Failed to fetch report: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -382,7 +736,7 @@ def list_reports():
         })
         
     except Exception as e:
-        logger.error(f"列出报告失败: {str(e)}")
+        logger.error("Failed to list reports: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -403,7 +757,7 @@ def download_report(report_id: str):
         if not report:
             return jsonify({
                 "success": False,
-                "error": f"报告不存在: {report_id}"
+                "error": f"Report not found: {report_id}"
             }), 404
         
         md_path = ReportManager._get_report_markdown_path(report_id)
@@ -428,7 +782,7 @@ def download_report(report_id: str):
         )
         
     except Exception as e:
-        logger.error(f"下载报告失败: {str(e)}")
+        logger.error("Failed to download report: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -445,16 +799,16 @@ def delete_report(report_id: str):
         if not success:
             return jsonify({
                 "success": False,
-                "error": f"报告不存在: {report_id}"
+                "error": f"Report not found: {report_id}"
             }), 404
         
         return jsonify({
             "success": True,
-            "message": f"报告已删除: {report_id}"
+            "message": f"Report deleted: {report_id}"
         })
         
     except Exception as e:
-        logger.error(f"删除报告失败: {str(e)}")
+        logger.error("Failed to delete report: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -501,13 +855,13 @@ def chat_with_report_agent():
         if not simulation_id:
             return jsonify({
                 "success": False,
-                "error": "请提供 simulation_id"
+                "error": "Please provide simulation_id"
             }), 400
         
         if not message:
             return jsonify({
                 "success": False,
-                "error": "请提供 message"
+                "error": "Please provide message"
             }), 400
         
         # 获取模拟和项目信息
@@ -517,21 +871,21 @@ def chat_with_report_agent():
         if not state:
             return jsonify({
                 "success": False,
-                "error": f"模拟不存在: {simulation_id}"
+                "error": f"Simulation not found: {simulation_id}"
             }), 404
         
         project = ProjectManager.get_project(state.project_id)
         if not project:
             return jsonify({
                 "success": False,
-                "error": f"项目不存在: {state.project_id}"
+                "error": f"Project not found: {state.project_id}"
             }), 404
         
         graph_id = state.graph_id or project.graph_id
         if not graph_id:
             return jsonify({
                 "success": False,
-                "error": "缺少图谱ID"
+                "error": "Missing graph ID"
             }), 400
         
         simulation_requirement = project.simulation_requirement or ""
@@ -551,7 +905,7 @@ def chat_with_report_agent():
         })
         
     except Exception as e:
-        logger.error(f"对话失败: {str(e)}")
+        logger.error("Chat failed: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -585,7 +939,7 @@ def get_report_progress(report_id: str):
         if not progress:
             return jsonify({
                 "success": False,
-                "error": f"报告不存在或进度信息不可用: {report_id}"
+                "error": f"Report not found or progress unavailable: {report_id}"
             }), 404
         
         return jsonify({
@@ -594,7 +948,7 @@ def get_report_progress(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取报告进度失败: {str(e)}")
+        logger.error("Failed to fetch report progress: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -645,7 +999,7 @@ def get_report_sections(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取章节列表失败: {str(e)}")
+        logger.error("Failed to fetch report sections: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -673,7 +1027,7 @@ def get_single_section(report_id: str, section_index: int):
         if not os.path.exists(section_path):
             return jsonify({
                 "success": False,
-                "error": f"章节不存在: section_{section_index:02d}.md"
+                "error": f"Section not found: section_{section_index:02d}.md"
             }), 404
         
         with open(section_path, 'r', encoding='utf-8') as f:
@@ -689,7 +1043,7 @@ def get_single_section(report_id: str, section_index: int):
         })
         
     except Exception as e:
-        logger.error(f"获取章节内容失败: {str(e)}")
+        logger.error("Failed to fetch section content: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -740,7 +1094,7 @@ def check_report_status(simulation_id: str):
         })
         
     except Exception as e:
-        logger.error(f"检查报告状态失败: {str(e)}")
+        logger.error("Failed to check report status: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -801,7 +1155,7 @@ def get_agent_log(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取Agent日志失败: {str(e)}")
+        logger.error("Failed to fetch agent log: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -835,7 +1189,7 @@ def stream_agent_log(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取Agent日志失败: {str(e)}")
+        logger.error("Failed to fetch agent log stream: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -883,7 +1237,7 @@ def get_console_log(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取控制台日志失败: {str(e)}")
+        logger.error("Failed to fetch console log: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -917,7 +1271,7 @@ def stream_console_log(report_id: str):
         })
         
     except Exception as e:
-        logger.error(f"获取控制台日志失败: {str(e)}")
+        logger.error("Failed to fetch console log stream: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -949,7 +1303,7 @@ def search_graph_tool():
         if not graph_id or not query:
             return jsonify({
                 "success": False,
-                "error": "请提供 graph_id 和 query"
+                "error": "Please provide graph_id and query"
             }), 400
         
         from ..services.graph_tools import GraphToolsService
@@ -970,7 +1324,7 @@ def search_graph_tool():
         })
         
     except Exception as e:
-        logger.error(f"图谱搜索失败: {str(e)}")
+        logger.error("Graph search failed: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),
@@ -996,7 +1350,7 @@ def get_graph_statistics_tool():
         if not graph_id:
             return jsonify({
                 "success": False,
-                "error": "请提供 graph_id"
+                "error": "Please provide graph_id"
             }), 400
         
         from ..services.graph_tools import GraphToolsService
@@ -1013,7 +1367,7 @@ def get_graph_statistics_tool():
         })
         
     except Exception as e:
-        logger.error(f"获取图谱统计失败: {str(e)}")
+        logger.error("Failed to fetch graph statistics: %s", str(e))
         return jsonify({
             "success": False,
             "error": str(e),

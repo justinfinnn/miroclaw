@@ -17,6 +17,7 @@ from flask import Flask, request
 from flask_cors import CORS
 
 from .config import Config
+from .services.runtime_settings import load_runtime_settings
 from .utils.logger import setup_logger, get_logger
 
 
@@ -29,6 +30,7 @@ def create_app(config_class=Config):
         app.json.ensure_ascii = False
 
     logger = setup_logger('mirofish')
+    load_runtime_settings()
 
     is_reloader_process = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
     debug_mode = app.config.get('DEBUG', False)
@@ -46,7 +48,14 @@ def create_app(config_class=Config):
         logger.info(f"  Neo4j:           {Config.NEO4J_URI}")
         logger.info("=" * 50)
 
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(
+        app,
+        resources={
+            r"/api/*": {"origins": "*"},
+            r"/health": {"origins": "*"},
+            r"/v1/*": {"origins": "*"},
+        },
+    )
 
     # --- Initialize Neo4jStorage singleton ---
     from .storage import Neo4jStorage
@@ -80,12 +89,13 @@ def create_app(config_class=Config):
         return response
 
     # Register blueprints
-    from .api import graph_bp, simulation_bp, report_bp
+    from .api import graph_bp, simulation_bp, report_bp, openai_compat_bp
     from .api.auth import auth_bp
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(openai_compat_bp)
 
     # Health check
     @app.route('/health')

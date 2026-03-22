@@ -41,10 +41,10 @@ class SearchResult:
 
     def to_text(self) -> str:
         """转换为文本格式，供LLM理解"""
-        text_parts = [f"搜索查询: {self.query}", f"找到 {self.total_count} 条相关信息"]
+        text_parts = [f"Search Query: {self.query}", f"Found {self.total_count} results"]
 
         if self.facts:
-            text_parts.append("\n### 相关事实:")
+            text_parts.append("\n### Related Facts:")
             for i, fact in enumerate(self.facts, 1):
                 text_parts.append(f"{i}. {fact}")
 
@@ -71,8 +71,8 @@ class NodeInfo:
 
     def to_text(self) -> str:
         """转换为文本格式"""
-        entity_type = next((la for la in self.labels if la not in ["Entity", "Node"]), "未知类型")
-        return f"实体: {self.name} (类型: {entity_type})\n摘要: {self.summary}"
+        entity_type = next((la for la in self.labels if la not in ["Entity", "Node"]), "Unknown")
+        return f"Entity: {self.name} (Type: {entity_type})\nSummary: {self.summary}"
 
 
 @dataclass
@@ -110,14 +110,14 @@ class EdgeInfo:
         """转换为文本格式"""
         source = self.source_node_name or self.source_node_uuid[:8]
         target = self.target_node_name or self.target_node_uuid[:8]
-        base_text = f"关系: {source} --[{self.name}]--> {target}\n事实: {self.fact}"
+        base_text = f"Relationship: {source} --[{self.name}]--> {target}\nFact: {self.fact}"
 
         if include_temporal:
-            valid_at = self.valid_at or "未知"
-            invalid_at = self.invalid_at or "至今"
-            base_text += f"\n时效: {valid_at} - {invalid_at}"
+            valid_at = self.valid_at or "Unknown"
+            invalid_at = self.invalid_at or "Present"
+            base_text += f"\nValidity: {valid_at} - {invalid_at}"
             if self.expired_at:
-                base_text += f" (已过期: {self.expired_at})"
+                base_text += f" (Expired: {self.expired_at})"
 
         return base_text
 
@@ -168,36 +168,36 @@ class InsightForgeResult:
     def to_text(self) -> str:
         """转换为详细的文本格式，供LLM理解"""
         text_parts = [
-            f"## 未来预测深度分析",
-            f"分析问题: {self.query}",
-            f"预测场景: {self.simulation_requirement}",
-            f"\n### 预测数据统计",
-            f"- 相关预测事实: {self.total_facts}条",
-            f"- 涉及实体: {self.total_entities}个",
-            f"- 关系链: {self.total_relationships}条"
+            "## Deep Future-Forecast Analysis",
+            f"Analysis Question: {self.query}",
+            f"Prediction Scenario: {self.simulation_requirement}",
+            "\n### Forecast Statistics",
+            f"- Relevant Predictive Facts: {self.total_facts}",
+            f"- Entities Involved: {self.total_entities}",
+            f"- Relationship Chains: {self.total_relationships}"
         ]
 
         if self.sub_queries:
-            text_parts.append(f"\n### 分析的子问题")
+            text_parts.append("\n### Sub-Questions")
             for i, sq in enumerate(self.sub_queries, 1):
                 text_parts.append(f"{i}. {sq}")
 
         if self.semantic_facts:
-            text_parts.append(f"\n### 【关键事实】(请在报告中引用这些原文)")
+            text_parts.append("\n### Key Facts (quote these directly when useful)")
             for i, fact in enumerate(self.semantic_facts, 1):
                 text_parts.append(f'{i}. "{fact}"')
 
         if self.entity_insights:
-            text_parts.append(f"\n### 【核心实体】")
+            text_parts.append("\n### Core Entities")
             for entity in self.entity_insights:
-                text_parts.append(f"- **{entity.get('name', '未知')}** ({entity.get('type', '实体')})")
+                text_parts.append(f"- **{entity.get('name', 'Unknown')}** ({entity.get('type', 'Entity')})")
                 if entity.get('summary'):
-                    text_parts.append(f"  摘要: \"{entity.get('summary')}\"")
+                    text_parts.append(f"  Summary: \"{entity.get('summary')}\"")
                 if entity.get('related_facts'):
-                    text_parts.append(f"  相关事实: {len(entity.get('related_facts', []))}条")
+                    text_parts.append(f"  Related Facts: {len(entity.get('related_facts', []))}")
 
         if self.relationship_chains:
-            text_parts.append(f"\n### 【关系链】")
+            text_parts.append("\n### Relationship Chains")
             for chain in self.relationship_chains:
                 text_parts.append(f"- {chain}")
 
@@ -238,29 +238,29 @@ class PanoramaResult:
     def to_text(self) -> str:
         """转换为文本格式（完整版本，不截断）"""
         text_parts = [
-            f"## 广度搜索结果（未来全景视图）",
-            f"查询: {self.query}",
-            f"\n### 统计信息",
-            f"- 总节点数: {self.total_nodes}",
-            f"- 总边数: {self.total_edges}",
-            f"- 当前有效事实: {self.active_count}条",
-            f"- 历史/过期事实: {self.historical_count}条"
+            "## Panorama Search Results (Future Overview)",
+            f"Query: {self.query}",
+            "\n### Statistics",
+            f"- Total Nodes: {self.total_nodes}",
+            f"- Total Edges: {self.total_edges}",
+            f"- Active Facts: {self.active_count}",
+            f"- Historical/Expired Facts: {self.historical_count}"
         ]
 
         if self.active_facts:
-            text_parts.append(f"\n### 【当前有效事实】(模拟结果原文)")
+            text_parts.append("\n### Active Facts (latest simulation output)")
             for i, fact in enumerate(self.active_facts, 1):
                 text_parts.append(f'{i}. "{fact}"')
 
         if self.historical_facts:
-            text_parts.append(f"\n### 【历史/过期事实】(演变过程记录)")
+            text_parts.append("\n### Historical/Expired Facts (evolution record)")
             for i, fact in enumerate(self.historical_facts, 1):
                 text_parts.append(f'{i}. "{fact}"')
 
         if self.all_nodes:
-            text_parts.append(f"\n### 【涉及实体】")
+            text_parts.append("\n### Involved Entities")
             for node in self.all_nodes:
-                entity_type = next((la for la in node.labels if la not in ["Entity", "Node"]), "实体")
+                entity_type = next((la for la in node.labels if la not in ["Entity", "Node"]), "Entity")
                 text_parts.append(f"- **{node.name}** ({entity_type})")
 
         return "\n".join(text_parts)
@@ -288,11 +288,11 @@ class AgentInterview:
 
     def to_text(self) -> str:
         text = f"**{self.agent_name}** ({self.agent_role})\n"
-        text += f"_简介: {self.agent_bio}_\n\n"
+        text += f"_Bio: {self.agent_bio}_\n\n"
         text += f"**Q:** {self.question}\n\n"
         text += f"**A:** {self.response}\n"
         if self.key_quotes:
-            text += "\n**关键引言:**\n"
+            text += "\n**Key Quotes:**\n"
             for quote in self.key_quotes:
                 clean_quote = quote.replace('\u201c', '').replace('\u201d', '').replace('"', '')
                 clean_quote = clean_quote.replace('\u300c', '').replace('\u300d', '')
@@ -350,25 +350,25 @@ class InterviewResult:
     def to_text(self) -> str:
         """转换为详细的文本格式，供LLM理解和报告引用"""
         text_parts = [
-            "## 深度采访报告",
-            f"**采访主题:** {self.interview_topic}",
-            f"**采访人数:** {self.interviewed_count} / {self.total_agents} 位模拟Agent",
-            "\n### 采访对象选择理由",
-            self.selection_reasoning or "（自动选择）",
+            "## Interview Report",
+            f"**Interview Topic:** {self.interview_topic}",
+            f"**Interviewed Agents:** {self.interviewed_count} / {self.total_agents}",
+            "\n### Selection Rationale",
+            self.selection_reasoning or "(Auto-selected)",
             "\n---",
-            "\n### 采访实录",
+            "\n### Interview Transcript",
         ]
 
         if self.interviews:
             for i, interview in enumerate(self.interviews, 1):
-                text_parts.append(f"\n#### 采访 #{i}: {interview.agent_name}")
+                text_parts.append(f"\n#### Interview #{i}: {interview.agent_name}")
                 text_parts.append(interview.to_text())
                 text_parts.append("\n---")
         else:
-            text_parts.append("（无采访记录）\n\n---")
+            text_parts.append("(No interview records)\n\n---")
 
-        text_parts.append("\n### 采访摘要与核心观点")
-        text_parts.append(self.summary or "（无摘要）")
+        text_parts.append("\n### Interview Summary and Key Takeaways")
+        text_parts.append(self.summary or "(No summary)")
 
         return "\n".join(text_parts)
 
@@ -396,7 +396,7 @@ class GraphToolsService:
     def __init__(self, storage: GraphStorage, llm_client: Optional[LLMClient] = None):
         self.storage = storage
         self._llm_client = llm_client
-        logger.info("GraphToolsService 初始化完成")
+        logger.info("GraphToolsService initialized")
 
     @property
     def llm(self) -> LLMClient:
@@ -426,7 +426,7 @@ class GraphToolsService:
         Returns:
             SearchResult
         """
-        logger.info(f"图谱搜索: graph_id={graph_id}, query={query[:50]}...")
+        logger.info("Graph search: graph_id=%s, query=%s...", graph_id, query[:50])
 
         try:
             search_results = self.storage.search(
@@ -481,7 +481,7 @@ class GraphToolsService:
                     if summary:
                         facts.append(f"[{node.get('name', '')}]: {summary}")
 
-            logger.info(f"搜索完成: 找到 {len(facts)} 条相关事实")
+            logger.info("Search complete: found %s relevant facts", len(facts))
 
             return SearchResult(
                 facts=facts,
@@ -492,7 +492,7 @@ class GraphToolsService:
             )
 
         except Exception as e:
-            logger.warning(f"图谱搜索失败，降级为本地搜索: {str(e)}")
+            logger.warning("Graph search failed; falling back to local search: %s", str(e))
             return self._local_search(graph_id, query, limit, scope)
 
     def _local_search(
@@ -505,7 +505,7 @@ class GraphToolsService:
         """
         本地关键词匹配搜索（降级方案）
         """
-        logger.info(f"使用本地搜索: query={query[:30]}...")
+        logger.info("Using local search fallback: query=%s...", query[:30])
 
         facts = []
         edges_result = []
@@ -570,10 +570,10 @@ class GraphToolsService:
                     if summary:
                         facts.append(f"[{node.get('name', '')}]: {summary}")
 
-            logger.info(f"本地搜索完成: 找到 {len(facts)} 条相关事实")
+            logger.info("Local search complete: found %s relevant facts", len(facts))
 
         except Exception as e:
-            logger.error(f"本地搜索失败: {str(e)}")
+            logger.error("Local search failed: %s", str(e))
 
         return SearchResult(
             facts=facts,
@@ -585,7 +585,7 @@ class GraphToolsService:
 
     def get_all_nodes(self, graph_id: str) -> List[NodeInfo]:
         """获取图谱的所有节点"""
-        logger.info(f"获取图谱 {graph_id} 的所有节点...")
+        logger.info("Fetching all nodes for graph %s...", graph_id)
 
         raw_nodes = self.storage.get_all_nodes(graph_id)
 
@@ -599,12 +599,12 @@ class GraphToolsService:
                 attributes=node.get("attributes", {})
             ))
 
-        logger.info(f"获取到 {len(result)} 个节点")
+        logger.info("Fetched %s nodes", len(result))
         return result
 
     def get_all_edges(self, graph_id: str, include_temporal: bool = True) -> List[EdgeInfo]:
         """获取图谱的所有边（含时间信息）"""
-        logger.info(f"获取图谱 {graph_id} 的所有边...")
+        logger.info("Fetching all edges for graph %s...", graph_id)
 
         raw_edges = self.storage.get_all_edges(graph_id)
 
@@ -626,12 +626,12 @@ class GraphToolsService:
 
             result.append(edge_info)
 
-        logger.info(f"获取到 {len(result)} 条边")
+        logger.info("Fetched %s edges", len(result))
         return result
 
     def get_node_detail(self, node_uuid: str) -> Optional[NodeInfo]:
         """获取单个节点的详细信息"""
-        logger.info(f"获取节点详情: {node_uuid[:8]}...")
+        logger.info("Fetching node detail: %s...", node_uuid[:8])
 
         try:
             node = self.storage.get_node(node_uuid)
@@ -646,7 +646,7 @@ class GraphToolsService:
                 attributes=node.get("attributes", {})
             )
         except Exception as e:
-            logger.error(f"获取节点详情失败: {str(e)}")
+            logger.error("Failed to fetch node detail: %s", str(e))
             return None
 
     def get_node_edges(self, graph_id: str, node_uuid: str) -> List[EdgeInfo]:
@@ -656,7 +656,7 @@ class GraphToolsService:
         Optimized: uses storage.get_node_edges() (O(degree) Cypher)
         instead of loading ALL edges and filtering.
         """
-        logger.info(f"获取节点 {node_uuid[:8]}... 的相关边")
+        logger.info("Fetching edges for node %s...", node_uuid[:8])
 
         try:
             raw_edges = self.storage.get_node_edges(node_uuid)
@@ -675,11 +675,11 @@ class GraphToolsService:
                     expired_at=edge.get("expired_at"),
                 ))
 
-            logger.info(f"找到 {len(result)} 条与节点相关的边")
+            logger.info("Found %s edges related to the node", len(result))
             return result
 
         except Exception as e:
-            logger.warning(f"获取节点边失败: {str(e)}")
+            logger.warning("Failed to fetch node edges: %s", str(e))
             return []
 
     def get_entities_by_type(
@@ -688,7 +688,7 @@ class GraphToolsService:
         entity_type: str
     ) -> List[NodeInfo]:
         """按类型获取实体"""
-        logger.info(f"获取类型为 {entity_type} 的实体...")
+        logger.info("Fetching entities of type %s...", entity_type)
 
         # Use optimized label-based query from storage
         raw_nodes = self.storage.get_nodes_by_label(graph_id, entity_type)
@@ -703,7 +703,7 @@ class GraphToolsService:
                 attributes=node.get("attributes", {})
             ))
 
-        logger.info(f"找到 {len(result)} 个 {entity_type} 类型的实体")
+        logger.info("Found %s entities of type %s", len(result), entity_type)
         return result
 
     def get_entity_summary(
@@ -712,7 +712,7 @@ class GraphToolsService:
         entity_name: str
     ) -> Dict[str, Any]:
         """获取指定实体的关系摘要"""
-        logger.info(f"获取实体 {entity_name} 的关系摘要...")
+        logger.info("Fetching relationship summary for entity %s...", entity_name)
 
         search_result = self.search_graph(
             graph_id=graph_id,
@@ -741,7 +741,7 @@ class GraphToolsService:
 
     def get_graph_statistics(self, graph_id: str) -> Dict[str, Any]:
         """获取图谱的统计信息"""
-        logger.info(f"获取图谱 {graph_id} 的统计信息...")
+        logger.info("Fetching graph statistics for %s...", graph_id)
 
         nodes = self.get_all_nodes(graph_id)
         edges = self.get_all_edges(graph_id)
@@ -771,7 +771,7 @@ class GraphToolsService:
         limit: int = 30
     ) -> Dict[str, Any]:
         """获取模拟相关的上下文信息"""
-        logger.info(f"获取模拟上下文: {simulation_requirement[:50]}...")
+        logger.info("Fetching simulation context: %s...", simulation_requirement[:50])
 
         search_result = self.search_graph(
             graph_id=graph_id,
@@ -821,7 +821,7 @@ class GraphToolsService:
         4. 追踪关系链
         5. 整合所有结果，生成深度洞察
         """
-        logger.info(f"InsightForge 深度洞察检索: {query[:50]}...")
+        logger.info("InsightForge deep search: %s...", query[:50])
 
         result = InsightForgeResult(
             query=query,
@@ -837,7 +837,7 @@ class GraphToolsService:
             max_queries=max_sub_queries
         )
         result.sub_queries = sub_queries
-        logger.info(f"生成 {len(sub_queries)} 个子问题")
+        logger.info("Generated %s sub-questions", len(sub_queries))
 
         # Step 2: 对每个子问题进行语义搜索
         all_facts = []
@@ -896,7 +896,7 @@ class GraphToolsService:
                 node = self.get_node_detail(uuid)
                 if node:
                     node_map[uuid] = node
-                    entity_type = next((la for la in node.labels if la not in ["Entity", "Node"]), "实体")
+                    entity_type = next((la for la in node.labels if la not in ["Entity", "Node"]), "Entity")
 
                     related_facts = [
                         f for f in all_facts
@@ -911,7 +911,7 @@ class GraphToolsService:
                         "related_facts": related_facts
                     })
             except Exception as e:
-                logger.debug(f"获取节点 {uuid} 失败: {e}")
+                logger.debug("Failed to fetch node %s: %s", uuid, e)
                 continue
 
         result.entity_insights = entity_insights
@@ -935,7 +935,12 @@ class GraphToolsService:
         result.relationship_chains = relationship_chains
         result.total_relationships = len(relationship_chains)
 
-        logger.info(f"InsightForge完成: {result.total_facts}条事实, {result.total_entities}个实体, {result.total_relationships}条关系")
+        logger.info(
+            "InsightForge complete: %s facts, %s entities, %s relationships",
+            result.total_facts,
+            result.total_entities,
+            result.total_relationships,
+        )
         return result
 
     def _generate_sub_queries(
@@ -946,23 +951,24 @@ class GraphToolsService:
         max_queries: int = 5
     ) -> List[str]:
         """使用LLM生成子问题"""
-        system_prompt = """你是一个专业的问题分析专家。你的任务是将一个复杂问题分解为多个可以在模拟世界中独立观察的子问题。
+        system_prompt = """You are an expert question analyst. Break a complex question into smaller sub-questions that can each be observed inside the simulation world.
 
-要求：
-1. 每个子问题应该足够具体，可以在模拟世界中找到相关的Agent行为或事件
-2. 子问题应该覆盖原问题的不同维度（如：谁、什么、为什么、怎么样、何时、何地）
-3. 子问题应该与模拟场景相关
-4. 返回JSON格式：{"sub_queries": ["子问题1", "子问题2", ...]}"""
+Requirements:
+1. Each sub-question should be concrete enough to map to specific agent behavior or events.
+2. Cover different dimensions of the original question, such as who, what, why, how, when, or where.
+3. Keep every sub-question relevant to the simulation scenario.
+4. Return JSON only in this format: {"sub_queries": ["Sub-question 1", "Sub-question 2", ...]}.
+5. Write every sub-question in English."""
 
-        user_prompt = f"""模拟需求背景：
+        user_prompt = f"""Simulation background:
 {simulation_requirement}
 
-{f"报告上下文：{report_context[:500]}" if report_context else ""}
+{f"Report context: {report_context[:500]}" if report_context else ""}
 
-请将以下问题分解为{max_queries}个子问题：
+Break this question into up to {max_queries} sub-questions:
 {query}
 
-返回JSON格式的子问题列表。"""
+Return JSON only with the sub-question list in English."""
 
         try:
             response = self.llm.chat_json(
@@ -977,12 +983,12 @@ class GraphToolsService:
             return [str(sq) for sq in sub_queries[:max_queries]]
 
         except Exception as e:
-            logger.warning(f"生成子问题失败: {str(e)}，使用默认子问题")
+            logger.warning("Failed to generate sub-questions; using defaults: %s", str(e))
             return [
                 query,
-                f"{query} 的主要参与者",
-                f"{query} 的原因和影响",
-                f"{query} 的发展过程"
+                f"Who are the main participants related to {query}?",
+                f"What are the causes and likely impacts of {query}?",
+                f"How does {query} develop over time?"
             ][:max_queries]
 
     def panorama_search(
@@ -997,7 +1003,7 @@ class GraphToolsService:
 
         获取全貌视图，包括所有相关内容和历史/过期信息。
         """
-        logger.info(f"PanoramaSearch 广度搜索: {query[:50]}...")
+        logger.info("PanoramaSearch overview search: %s...", query[:50])
 
         result = PanoramaResult(query=query)
 
@@ -1026,8 +1032,8 @@ class GraphToolsService:
             is_historical = edge.is_expired or edge.is_invalid
 
             if is_historical:
-                valid_at = edge.valid_at or "未知"
-                invalid_at = edge.invalid_at or edge.expired_at or "未知"
+                valid_at = edge.valid_at or "Unknown"
+                invalid_at = edge.invalid_at or edge.expired_at or "Unknown"
                 fact_with_time = f"[{valid_at} - {invalid_at}] {edge.fact}"
                 historical_facts.append(fact_with_time)
             else:
@@ -1055,7 +1061,11 @@ class GraphToolsService:
         result.active_count = len(active_facts)
         result.historical_count = len(historical_facts)
 
-        logger.info(f"PanoramaSearch完成: {result.active_count}条有效, {result.historical_count}条历史")
+        logger.info(
+            "PanoramaSearch complete: %s active facts, %s historical facts",
+            result.active_count,
+            result.historical_count,
+        )
         return result
 
     def quick_search(
@@ -1068,7 +1078,7 @@ class GraphToolsService:
         【QuickSearch - 简单搜索】
         快速、轻量级的检索工具。
         """
-        logger.info(f"QuickSearch 简单搜索: {query[:50]}...")
+        logger.info("QuickSearch: %s...", query[:50])
 
         result = self.search_graph(
             graph_id=graph_id,
@@ -1077,7 +1087,7 @@ class GraphToolsService:
             scope="edges"
         )
 
-        logger.info(f"QuickSearch完成: {result.total_count}条结果")
+        logger.info("QuickSearch complete: %s results", result.total_count)
         return result
 
     def interview_agents(
@@ -1097,7 +1107,7 @@ class GraphToolsService:
         """
         from .simulation_runner import SimulationRunner
 
-        logger.info(f"InterviewAgents 深度采访（真实API）: {interview_requirement[:50]}...")
+        logger.info("InterviewAgents real-API interview: %s...", interview_requirement[:50])
 
         result = InterviewResult(
             interview_topic=interview_requirement,
@@ -1108,12 +1118,12 @@ class GraphToolsService:
         profiles = self._load_agent_profiles(simulation_id)
 
         if not profiles:
-            logger.warning(f"未找到模拟 {simulation_id} 的人设文件")
-            result.summary = "未找到可采访的Agent人设文件"
+            logger.warning("No agent profile file found for simulation %s", simulation_id)
+            result.summary = "No interviewable agent profile file was found for this simulation."
             return result
 
         result.total_agents = len(profiles)
-        logger.info(f"加载到 {len(profiles)} 个Agent人设")
+        logger.info("Loaded %s agent profiles", len(profiles))
 
         # Step 2: 使用LLM选择要采访的Agent
         selected_agents, selected_indices, selection_reasoning = self._select_agents_for_interview(
@@ -1125,7 +1135,7 @@ class GraphToolsService:
 
         result.selected_agents = selected_agents
         result.selection_reasoning = selection_reasoning
-        logger.info(f"选择了 {len(selected_agents)} 个Agent进行采访: {selected_indices}")
+        logger.info("Selected %s agents for interview: %s", len(selected_agents), selected_indices)
 
         # Step 3: 生成采访问题
         if not result.interview_questions:
@@ -1134,20 +1144,20 @@ class GraphToolsService:
                 simulation_requirement=simulation_requirement,
                 selected_agents=selected_agents
             )
-            logger.info(f"生成了 {len(result.interview_questions)} 个采访问题")
+            logger.info("Generated %s interview questions", len(result.interview_questions))
 
         combined_prompt = "\n".join([f"{i+1}. {q}" for i, q in enumerate(result.interview_questions)])
 
         INTERVIEW_PROMPT_PREFIX = (
-            "你正在接受一次采访。请结合你的人设、所有的过往记忆与行动，"
-            "以纯文本方式直接回答以下问题。\n"
-            "回复要求：\n"
-            "1. 直接用自然语言回答，不要调用任何工具\n"
-            "2. 不要返回JSON格式或工具调用格式\n"
-            "3. 不要使用Markdown标题（如#、##、###）\n"
-            "4. 按问题编号逐一回答，每个回答以「问题X：」开头（X为问题编号）\n"
-            "5. 每个问题的回答之间用空行分隔\n"
-            "6. 回答要有实质内容，每个问题至少回答2-3句话\n\n"
+            "You are being interviewed. Answer the questions below based on your persona, memories, and prior actions.\n"
+            "Response requirements:\n"
+            "1. Answer directly in natural language and do not call any tools.\n"
+            "2. Do not return JSON or tool-call syntax.\n"
+            "3. Do not use Markdown headings such as #, ##, or ###.\n"
+            "4. Answer each question in order, and begin each answer with 'Question X:' where X is the question number.\n"
+            "5. Separate answers with blank lines.\n"
+            "6. Give substantive answers with at least 2-3 sentences per question.\n"
+            "7. Write the answers in English.\n\n"
         )
         optimized_prompt = f"{INTERVIEW_PROMPT_PREFIX}{combined_prompt}"
 
@@ -1160,7 +1170,7 @@ class GraphToolsService:
                     "prompt": optimized_prompt
                 })
 
-            logger.info(f"调用批量采访API（双平台）: {len(interviews_request)} 个Agent")
+            logger.info("Calling batch interview API across both platforms for %s agents", len(interviews_request))
 
             api_result = SimulationRunner.interview_agents_batch(
                 simulation_id=simulation_id,
@@ -1169,12 +1179,16 @@ class GraphToolsService:
                 timeout=180.0
             )
 
-            logger.info(f"采访API返回: {api_result.get('interviews_count', 0)} 个结果, success={api_result.get('success')}")
+            logger.info(
+                "Interview API returned %s results, success=%s",
+                api_result.get('interviews_count', 0),
+                api_result.get('success'),
+            )
 
             if not api_result.get("success", False):
-                error_msg = api_result.get("error", "未知错误")
-                logger.warning(f"采访API返回失败: {error_msg}")
-                result.summary = f"采访API调用失败：{error_msg}。请检查OASIS模拟环境状态。"
+                error_msg = api_result.get("error", "Unknown error")
+                logger.warning("Interview API returned failure: %s", error_msg)
+                result.summary = f"Interview API call failed: {error_msg}. Please check the OASIS simulation environment."
                 return result
 
             # Step 5: 解析API返回结果
@@ -1184,7 +1198,7 @@ class GraphToolsService:
             for i, agent_idx in enumerate(selected_indices):
                 agent = selected_agents[i]
                 agent_name = agent.get("realname", agent.get("username", f"Agent_{agent_idx}"))
-                agent_role = agent.get("profession", "未知")
+                agent_role = agent.get("profession", "Unknown")
                 agent_bio = agent.get("bio", "")
 
                 twitter_result = results_dict.get(f"twitter_{agent_idx}", {})
@@ -1196,9 +1210,9 @@ class GraphToolsService:
                 twitter_response = self._clean_tool_call_response(twitter_response)
                 reddit_response = self._clean_tool_call_response(reddit_response)
 
-                twitter_text = twitter_response if twitter_response else "（该平台未获得回复）"
-                reddit_text = reddit_response if reddit_response else "（该平台未获得回复）"
-                response_text = f"【Twitter平台回答】\n{twitter_text}\n\n【Reddit平台回答】\n{reddit_text}"
+                twitter_text = twitter_response if twitter_response else "(No response on this platform)"
+                reddit_text = reddit_response if reddit_response else "(No response on this platform)"
+                response_text = f"**Twitter Answer:**\n{twitter_text}\n\n**Reddit Answer:**\n{reddit_text}"
 
                 import re
                 combined_responses = f"{twitter_response} {reddit_response}"
@@ -1206,7 +1220,7 @@ class GraphToolsService:
                 clean_text = re.sub(r'#{1,6}\s+', '', combined_responses)
                 clean_text = re.sub(r'\{[^}]*tool_name[^}]*\}', '', clean_text)
                 clean_text = re.sub(r'[*_`|>~\-]{2,}', '', clean_text)
-                clean_text = re.sub(r'问题\d+[：:]\s*', '', clean_text)
+                clean_text = re.sub(r'(?:Question|问题)\s*\d+[：:]\s*', '', clean_text, flags=re.IGNORECASE)
                 clean_text = re.sub(r'【[^】]+】', '', clean_text)
 
                 sentences = re.split(r'[。！？]', clean_text)
@@ -1214,10 +1228,10 @@ class GraphToolsService:
                     s.strip() for s in sentences
                     if 20 <= len(s.strip()) <= 150
                     and not re.match(r'^[\s\W，,；;：:、]+', s.strip())
-                    and not s.strip().startswith(('{', '问题'))
+                    and not s.strip().startswith(('{', 'Question', '问题'))
                 ]
                 meaningful.sort(key=len, reverse=True)
-                key_quotes = [s + "。" for s in meaningful[:3]]
+                key_quotes = [s.rstrip(".!? ") + "." for s in meaningful[:3]]
 
                 if not key_quotes:
                     paired = re.findall(r'\u201c([^\u201c\u201d]{15,100})\u201d', clean_text)
@@ -1237,14 +1251,14 @@ class GraphToolsService:
             result.interviewed_count = len(result.interviews)
 
         except ValueError as e:
-            logger.warning(f"采访API调用失败（环境未运行？）: {e}")
-            result.summary = f"采访失败：{str(e)}。模拟环境可能已关闭，请确保OASIS环境正在运行。"
+            logger.warning("Interview API call failed (environment may be offline): %s", e)
+            result.summary = f"Interview failed: {str(e)}. The simulation environment may be offline; please make sure OASIS is running."
             return result
         except Exception as e:
-            logger.error(f"采访API调用异常: {e}")
+            logger.error("Interview API exception: %s", e)
             import traceback
             logger.error(traceback.format_exc())
-            result.summary = f"采访过程发生错误：{str(e)}"
+            result.summary = f"An error occurred during the interview process: {str(e)}"
             return result
 
         # Step 6: 生成采访摘要
@@ -1254,7 +1268,7 @@ class GraphToolsService:
                 interview_requirement=interview_requirement
             )
 
-        logger.info(f"InterviewAgents完成: 采访了 {result.interviewed_count} 个Agent（双平台）")
+        logger.info("InterviewAgents complete: interviewed %s agents across both platforms", result.interviewed_count)
         return result
 
     @staticmethod
@@ -1296,10 +1310,10 @@ class GraphToolsService:
             try:
                 with open(reddit_profile_path, 'r', encoding='utf-8') as f:
                     profiles = json.load(f)
-                logger.info(f"从 reddit_profiles.json 加载了 {len(profiles)} 个人设")
+                logger.info("Loaded %s profiles from reddit_profiles.json", len(profiles))
                 return profiles
             except Exception as e:
-                logger.warning(f"读取 reddit_profiles.json 失败: {e}")
+                logger.warning("Failed to read reddit_profiles.json: %s", e)
 
         # 尝试读取Twitter CSV格式
         twitter_profile_path = os.path.join(sim_dir, "twitter_profiles.csv")
@@ -1313,12 +1327,12 @@ class GraphToolsService:
                             "username": row.get("username", ""),
                             "bio": row.get("description", ""),
                             "persona": row.get("user_char", ""),
-                            "profession": "未知"
+                            "profession": "Unknown"
                         })
-                logger.info(f"从 twitter_profiles.csv 加载了 {len(profiles)} 个人设")
+                logger.info("Loaded %s profiles from twitter_profiles.csv", len(profiles))
                 return profiles
             except Exception as e:
-                logger.warning(f"读取 twitter_profiles.csv 失败: {e}")
+                logger.warning("Failed to read twitter_profiles.csv: %s", e)
 
         return profiles
 
@@ -1329,43 +1343,43 @@ class GraphToolsService:
         simulation_requirement: str,
         max_agents: int
     ) -> tuple:
-        """使用LLM选择要采访的Agent"""
+        """Use the LLM to choose which agents to interview."""
 
         agent_summaries = []
         for i, profile in enumerate(profiles):
             summary = {
                 "index": i,
                 "name": profile.get("realname", profile.get("username", f"Agent_{i}")),
-                "profession": profile.get("profession", "未知"),
+                "profession": profile.get("profession", "Unknown"),
                 "bio": profile.get("bio", "")[:200],
                 "interested_topics": profile.get("interested_topics", [])
             }
             agent_summaries.append(summary)
 
-        system_prompt = """你是一个专业的采访策划专家。你的任务是根据采访需求，从模拟Agent列表中选择最适合采访的对象。
+        system_prompt = """You are an expert interview producer. Select the best simulation agents to interview for the requested topic.
 
-选择标准：
-1. Agent的身份/职业与采访主题相关
-2. Agent可能持有独特或有价值的观点
-3. 选择多样化的视角（如：支持方、反对方、中立方、专业人士等）
-4. 优先选择与事件直接相关的角色
+Selection criteria:
+1. The agent's identity or profession should be relevant to the interview topic.
+2. The agent is likely to offer a distinct or valuable perspective.
+3. Prefer a diverse mix of viewpoints, such as supportive, opposing, neutral, or expert voices.
+4. Prioritize agents with a direct connection to the event.
 
-返回JSON格式：
+Return JSON only:
 {
-    "selected_indices": [选中Agent的索引列表],
-    "reasoning": "选择理由说明"
+    "selected_indices": [list of selected agent indexes],
+    "reasoning": "Short English explanation of the selection"
 }"""
 
-        user_prompt = f"""采访需求：
+        user_prompt = f"""Interview request:
 {interview_requirement}
 
-模拟背景：
-{simulation_requirement if simulation_requirement else "未提供"}
+Simulation background:
+{simulation_requirement if simulation_requirement else "Not provided"}
 
-可选择的Agent列表（共{len(agent_summaries)}个）：
+Available agents ({len(agent_summaries)} total):
 {json.dumps(agent_summaries, ensure_ascii=False, indent=2)}
 
-请选择最多{max_agents}个最适合采访的Agent，并说明选择理由。"""
+Select up to {max_agents} of the most suitable agents to interview and explain why in English."""
 
         try:
             response = self.llm.chat_json(
@@ -1377,7 +1391,7 @@ class GraphToolsService:
             )
 
             selected_indices = response.get("selected_indices", [])[:max_agents]
-            reasoning = response.get("reasoning", "基于相关性自动选择")
+            reasoning = response.get("reasoning", "Selected automatically based on relevance.")
 
             selected_agents = []
             valid_indices = []
@@ -1389,10 +1403,10 @@ class GraphToolsService:
             return selected_agents, valid_indices, reasoning
 
         except Exception as e:
-            logger.warning(f"LLM选择Agent失败，使用默认选择: {e}")
+            logger.warning("LLM agent selection failed; using defaults: %s", e)
             selected = profiles[:max_agents]
             indices = list(range(min(max_agents, len(profiles))))
-            return selected, indices, "使用默认选择策略"
+            return selected, indices, "Used the default selection strategy."
 
     def _generate_interview_questions(
         self,
@@ -1400,29 +1414,29 @@ class GraphToolsService:
         simulation_requirement: str,
         selected_agents: List[Dict[str, Any]]
     ) -> List[str]:
-        """使用LLM生成采访问题"""
+        """Use the LLM to generate interview questions."""
 
-        agent_roles = [a.get("profession", "未知") for a in selected_agents]
+        agent_roles = [a.get("profession", "Unknown") for a in selected_agents]
 
-        system_prompt = """你是一个专业的记者/采访者。根据采访需求，生成3-5个深度采访问题。
+        system_prompt = """You are an expert journalist. Generate 3-5 deep interview questions for the requested topic.
 
-问题要求：
-1. 开放性问题，鼓励详细回答
-2. 针对不同角色可能有不同答案
-3. 涵盖事实、观点、感受等多个维度
-4. 语言自然，像真实采访一样
-5. 每个问题控制在50字以内，简洁明了
-6. 直接提问，不要包含背景说明或前缀
+Question requirements:
+1. Use open-ended questions that invite detailed answers.
+2. Make room for different roles to answer differently.
+3. Cover facts, viewpoints, emotions, and implications.
+4. Keep the language natural, like a real interview.
+5. Keep each question concise, ideally under 50 words.
+6. Ask direct questions without extra setup or prefixes.
+7. Return JSON only in this format: {"questions": ["Question 1", "Question 2", ...]}.
+8. Write all questions in English."""
 
-返回JSON格式：{"questions": ["问题1", "问题2", ...]}"""
+        user_prompt = f"""Interview request: {interview_requirement}
 
-        user_prompt = f"""采访需求：{interview_requirement}
+Simulation background: {simulation_requirement if simulation_requirement else "Not provided"}
 
-模拟背景：{simulation_requirement if simulation_requirement else "未提供"}
+Interviewee roles: {', '.join(agent_roles)}
 
-采访对象角色：{', '.join(agent_roles)}
-
-请生成3-5个采访问题。"""
+Generate 3-5 interview questions in English."""
 
         try:
             response = self.llm.chat_json(
@@ -1433,14 +1447,14 @@ class GraphToolsService:
                 temperature=0.5
             )
 
-            return response.get("questions", [f"关于{interview_requirement}，您有什么看法？"])
+            return response.get("questions", [f"What is your perspective on {interview_requirement}?"])
 
         except Exception as e:
-            logger.warning(f"生成采访问题失败: {e}")
+            logger.warning("Failed to generate interview questions: %s", e)
             return [
-                f"关于{interview_requirement}，您的观点是什么？",
-                "这件事对您或您所代表的群体有什么影响？",
-                "您认为应该如何解决或改进这个问题？"
+                f"What is your perspective on {interview_requirement}?",
+                "How does this issue affect you or the group you represent?",
+                "What do you think should be done to address or improve this situation?"
             ]
 
     def _generate_interview_summary(
@@ -1448,37 +1462,38 @@ class GraphToolsService:
         interviews: List[AgentInterview],
         interview_requirement: str
     ) -> str:
-        """生成采访摘要"""
+        """Generate an interview summary."""
 
         if not interviews:
-            return "未完成任何采访"
+            return "No interviews were completed."
 
         interview_texts = []
         for interview in interviews:
-            interview_texts.append(f"【{interview.agent_name}（{interview.agent_role}）】\n{interview.response[:500]}")
+            interview_texts.append(f"[{interview.agent_name} ({interview.agent_role})]\n{interview.response[:500]}")
 
-        system_prompt = """你是一个专业的新闻编辑。请根据多位受访者的回答，生成一份采访摘要。
+        system_prompt = """You are an expert news editor. Based on multiple interview responses, write a concise interview summary.
 
-摘要要求：
-1. 提炼各方主要观点
-2. 指出观点的共识和分歧
-3. 突出有价值的引言
-4. 客观中立，不偏袒任何一方
-5. 控制在1000字内
+Summary requirements:
+1. Distill the main viewpoints from each side.
+2. Highlight areas of agreement and disagreement.
+3. Surface especially valuable quotes or takeaways.
+4. Stay objective and neutral.
+5. Keep the summary under 1000 words.
 
-格式约束（必须遵守）：
-- 使用纯文本段落，用空行分隔不同部分
-- 不要使用Markdown标题（如#、##、###）
-- 不要使用分割线（如---、***）
-- 引用受访者原话时使用中文引号「」
-- 可以使用**加粗**标记关键词，但不要使用其他Markdown语法"""
+Formatting constraints:
+- Use plain-text paragraphs separated by blank lines.
+- Do not use Markdown headings such as #, ##, or ###.
+- Do not use divider lines such as --- or ***.
+- When quoting interviewees, use standard quotation marks.
+- You may use **bold** for emphasis, but avoid other Markdown syntax.
+- Write the summary in English."""
 
-        user_prompt = f"""采访主题：{interview_requirement}
+        user_prompt = f"""Interview topic: {interview_requirement}
 
-采访内容：
+Interview content:
 {"".join(interview_texts)}
 
-请生成采访摘要。"""
+Write the interview summary in English."""
 
         try:
             summary = self.llm.chat(
@@ -1492,5 +1507,5 @@ class GraphToolsService:
             return summary
 
         except Exception as e:
-            logger.warning(f"生成采访摘要失败: {e}")
-            return f"共采访了{len(interviews)}位受访者，包括：" + "、".join([i.agent_name for i in interviews])
+            logger.warning("Failed to generate interview summary: %s", e)
+            return f"Interviewed {len(interviews)} participants, including: " + ", ".join([i.agent_name for i in interviews])

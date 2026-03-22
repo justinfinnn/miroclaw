@@ -103,7 +103,7 @@ class GraphBuilderService:
                 task_id,
                 status=TaskStatus.PROCESSING,
                 progress=5,
-                message="开始构建图谱..."
+                message="Starting graph build..."
             )
 
             # 1. 创建图谱
@@ -111,7 +111,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=10,
-                message=f"图谱已创建: {graph_id}"
+                message=f"Graph created: {graph_id}"
             )
 
             # 2. 设置本体
@@ -119,7 +119,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=15,
-                message="本体已设置"
+                message="Ontology configured"
             )
 
             # 3. 文本分块
@@ -128,7 +128,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=20,
-                message=f"文本已分割为 {total_chunks} 个块"
+                message=f"Text split into {total_chunks} chunks"
             )
 
             # 4. 分批发送数据 (NER + embedding + Neo4j insert — synchronous)
@@ -147,7 +147,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=85,
-                message="数据处理完成，获取图谱信息..."
+                message="Data processing complete. Fetching graph info..."
             )
 
             # 6. 获取图谱信息
@@ -203,7 +203,7 @@ class GraphBuilderService:
             if progress_callback:
                 progress = (i + len(batch_chunks)) / total_chunks
                 progress_callback(
-                    f"处理第 {batch_num}/{total_batches} 批数据 ({len(batch_chunks)} 块)...",
+                    f"Processing batch {batch_num}/{total_batches} ({len(batch_chunks)} chunks)...",
                     progress
                 )
 
@@ -229,7 +229,7 @@ class GraphBuilderService:
                         f"after {elapsed:.1f}s: {e}"
                     )
                     if progress_callback:
-                        progress_callback(f"批次 {batch_num} 处理失败: {str(e)}", 0)
+                        progress_callback(f"Batch {batch_num} failed: {str(e)}", 0)
                     raise
 
         logger.info(f"[graph_build] All {total_chunks} chunks processed successfully")

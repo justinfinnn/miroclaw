@@ -995,6 +995,24 @@ def create_model(config: Dict[str, Any], use_boost: bool = False):
         config: 模拟配置字典
         use_boost: 是否使用加速 LLM 配置（如果可用）
     """
+    modeling_backend = os.environ.get("MODELING_BACKEND", "ollama").strip().lower()
+    adapter_base_url = os.environ.get("MIROCLAW_OPENAI_ADAPTER_URL", "")
+
+    if modeling_backend in ("codex", "openclaw") and adapter_base_url:
+        llm_model = (
+            os.environ.get("OPENCLAW_MODEL", "")
+            or os.environ.get("CODEX_MODEL_NAME", "")
+            or os.environ.get("LLM_MODEL_NAME", "")
+            or config.get("llm_model", "miroclaw-auto")
+        )
+        os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY") or "miroclaw"
+        os.environ["OPENAI_API_BASE_URL"] = adapter_base_url
+        print(f"[MiroClaw adapter] backend={modeling_backend}, model={llm_model}, base_url={adapter_base_url}")
+        return ModelFactory.create(
+            model_platform=ModelPlatformType.OPENAI,
+            model_type=llm_model,
+        )
+
     # 检查是否有加速配置
     boost_api_key = os.environ.get("LLM_BOOST_API_KEY", "")
     boost_base_url = os.environ.get("LLM_BOOST_BASE_URL", "")

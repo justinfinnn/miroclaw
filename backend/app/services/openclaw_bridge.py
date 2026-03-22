@@ -52,6 +52,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from .managed_openclaw_store import ManagedOpenClawProfileStore
 from ..utils.logger import get_logger
 
 logger = get_logger("mirofish.openclaw_bridge")
@@ -65,6 +66,13 @@ OPENAI_TOKEN_REFRESH_URL = "https://auth.openai.com/oauth/token"
 # OpenAI's OAuth client_id used by OpenClaw (public value, extracted from JWT)
 # This is the OpenClaw app client_id registered with OpenAI
 OPENCLAW_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+PROFILE_SOURCE_LOCAL = "local"
+PROFILE_SOURCE_MANAGED = "managed"
+PROFILE_META_SOURCE = "__miro_source"
+PROFILE_META_SOURCE_LABEL = "__miro_source_label"
+PROFILE_META_SOURCE_PATH = "__miro_source_path"
+PROFILE_META_KEY = "__miro_profile_key"
 
 
 class OpenClawBridge:
@@ -142,8 +150,8 @@ class OpenClawBridge:
         except Exception:
             return False
 
-    def _load_profiles(self) -> Optional[dict]:
-        """Load and return the raw profiles JSON, or None on failure."""
+    def _load_local_profiles(self) -> Optional[dict]:
+        """Load and return the raw local OpenClaw profiles JSON, or None on failure."""
         if self._profiles_path is None:
             self._profiles_path = self._find_profiles_file()
         if self._profiles_path is None:
@@ -156,13 +164,50 @@ class OpenClawBridge:
             logger.warning(f"[OpenClawBridge] Could not read {self._profiles_path}: {exc}")
             return None
 
+    def _load_combined_profiles(self) -> dict:
+        """Return managed + local profiles, preferring managed on key conflicts."""
+        combined: dict[str, dict] = {}
+
+        managed_payload = ManagedOpenClawProfileStore.load_payload()
+        managed_profiles = managed_payload.get("profiles", {})
+        if isinstance(managed_profiles, dict):
+            for profile_key, profile in managed_profiles.items():
+                if not isinstance(profile, dict):
+                    continue
+                enriched = dict(profile)
+                enriched.setdefault("provider", str(profile_key).split(":")[0])
+                enriched[PROFILE_META_SOURCE] = PROFILE_SOURCE_MANAGED
+                enriched[PROFILE_META_SOURCE_LABEL] = (
+                    managed_payload.get("source_label") or "Imported OpenClaw profiles"
+                )
+                enriched[PROFILE_META_SOURCE_PATH] = ManagedOpenClawProfileStore.file_path()
+                enriched[PROFILE_META_KEY] = str(profile_key)
+                combined[str(profile_key)] = enriched
+
+        local_payload = self._load_local_profiles()
+        if isinstance(local_payload, dict):
+            local_profiles = local_payload.get("profiles", {})
+            if isinstance(local_profiles, dict):
+                for profile_key, profile in local_profiles.items():
+                    if not isinstance(profile, dict) or str(profile_key) in combined:
+                        continue
+                    enriched = dict(profile)
+                    enriched.setdefault("provider", str(profile_key).split(":")[0])
+                    enriched[PROFILE_META_SOURCE] = PROFILE_SOURCE_LOCAL
+                    enriched[PROFILE_META_SOURCE_LABEL] = "Local OpenClaw profiles"
+                    enriched[PROFILE_META_SOURCE_PATH] = str(self._profiles_path) if self._profiles_path else None
+                    enriched[PROFILE_META_KEY] = str(profile_key)
+                    combined[str(profile_key)] = enriched
+
+        return {"profiles": combined}
+
     # ------------------------------------------------------------------
     # Token extraction
     # ------------------------------------------------------------------
 
     def _get_codex_profile(self) -> Optional[dict]:
         """Return the raw openai-codex profile dict, or None."""
-        data = self._load_profiles()
+        data = self._load_combined_profiles()
         if data is None:
             return None
         profiles = data.get("profiles", {})
@@ -230,7 +275,7 @@ class OpenClawBridge:
             get_provider_info,
         )
 
-        data = self._load_profiles()
+        data = self._load_combined_profiles()
         if data is None:
             logger.debug("[OpenClawBridge] No profiles found for provider discovery")
             return []
@@ -260,6 +305,9 @@ class OpenClawBridge:
                 },
                 "expires": profile.get("expires"),
                 "account_id": profile.get("accountId"),
+                "source": profile.get(PROFILE_META_SOURCE),
+                "source_label": profile.get(PROFILE_META_SOURCE_LABEL),
+                "source_path": profile.get(PROFILE_META_SOURCE_PATH),
             }
             result.append(entry)
 
@@ -327,6 +375,15 @@ class OpenClawBridge:
                 if new_expires_in:
                     expires_at = time.time() + float(new_expires_in)
                 refresh_token = refreshed.get("refresh_token", refresh_token)
+                if profile.get(PROFILE_META_SOURCE) == PROFILE_SOURCE_MANAGED:
+                    ManagedOpenClawProfileStore.update_profile(
+                        profile.get(PROFILE_META_KEY, "openai-codex:default"),
+                        {
+                            "access": access_token,
+                            "refresh": refresh_token,
+                            "expires": int(expires_at * 1000) if expires_at else 0,
+                        },
+                    )
 
         account_id = profile.get("accountId", "")
         label = f"OpenClaw openai-codex (account: {account_id[:8]}...)" if account_id else "OpenClaw openai-codex"
@@ -343,7 +400,7 @@ class OpenClawBridge:
             f"[OpenClawBridge] Synced token → CredentialStore "
             f"(credential_id={OPENCLAW_CODEX_CREDENTIAL_ID!r}, "
             f"expires_at={expires_at:.0f}, "
-            f"profiles_path={self._profiles_path})"
+            f"profiles_path={profile.get(PROFILE_META_SOURCE_PATH) or self._profiles_path})"
         )
         return stored
 
@@ -359,8 +416,9 @@ class OpenClawBridge:
         """
         from .llm_credential_store import CredentialStore
 
-        profiles_path = self._find_profiles_file()
-        profile = self._get_codex_profile() if profiles_path else None
+        local_profiles_path = self._find_profiles_file()
+        managed_status = ManagedOpenClawProfileStore.status()
+        profile = self._get_codex_profile()
 
         has_profile = profile is not None
         token_present = bool(profile.get("access") if profile else False)
@@ -375,8 +433,26 @@ class OpenClawBridge:
         store_valid = stored_cred is not None and not stored_cred.is_expired()
 
         return {
-            "openclaw_profiles_found": profiles_path is not None,
-            "profiles_path": str(profiles_path) if profiles_path else None,
+            "openclaw_profiles_found": bool(managed_status["managed_profiles_found"] or local_profiles_path is not None),
+            "profiles_path": (
+                profile.get(PROFILE_META_SOURCE_PATH)
+                if profile
+                else (
+                    managed_status["profiles_path"]
+                    or (str(local_profiles_path) if local_profiles_path else None)
+                )
+            ),
+            "profile_source": profile.get(PROFILE_META_SOURCE) if profile else None,
+            "profile_source_label": profile.get(PROFILE_META_SOURCE_LABEL) if profile else None,
+            "managed_profiles_found": managed_status["managed_profiles_found"],
+            "managed_profiles_path": managed_status["profiles_path"],
+            "managed_profiles_count": managed_status["profiles_count"],
+            "managed_provider_count": managed_status["provider_count"],
+            "managed_provider_names": managed_status["provider_names"],
+            "managed_source_label": managed_status["source_label"],
+            "managed_updated_at": managed_status["updated_at"],
+            "local_profiles_found": local_profiles_path is not None,
+            "local_profiles_path": str(local_profiles_path) if local_profiles_path else None,
             "codex_profile_present": has_profile,
             "token_present": token_present,
             "token_valid": token_valid,

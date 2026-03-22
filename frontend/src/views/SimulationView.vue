@@ -22,8 +22,8 @@
 
       <div class="header-right">
         <div class="workflow-step">
-          <span class="step-num">Step 2/5</span>
-          <span class="step-name">Env Setup</span>
+          <span class="step-num">Step 3/6</span>
+          <span class="step-name">Setup</span>
         </div>
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -32,6 +32,20 @@
         </span>
       </div>
     </header>
+
+    <WorkflowStepper
+      current="setup"
+      :project-id="projectData?.project_id"
+      :simulation-id="currentSimulationId"
+      :report-id="currentReportId"
+    />
+
+    <WorkflowQuickActions
+      current="setup"
+      :project-id="projectData?.project_id"
+      :simulation-id="currentSimulationId"
+      :report-id="currentReportId"
+    />
 
     <!-- Main Content Area -->
     <main class="content-area">
@@ -49,6 +63,7 @@
       <!-- Right Panel: Step2 Env Setup -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <Step2EnvSetup
+          :key="currentSimulationId"
           :simulationId="currentSimulationId"
           :projectData="projectData"
           :graphData="graphData"
@@ -64,12 +79,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
+import WorkflowStepper from '../components/WorkflowStepper.vue'
+import WorkflowQuickActions from '../components/WorkflowQuickActions.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
+import { getReportBySimulation } from '../api/report'
 
 const route = useRoute()
 const router = useRouter()
@@ -84,6 +102,7 @@ const viewMode = ref('split')
 
 // Data State
 const currentSimulationId = ref(route.params.simulationId)
+const currentReportId = ref(null)
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
@@ -243,6 +262,11 @@ const loadSimulationData = async () => {
     const simRes = await getSimulation(currentSimulationId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
+      currentReportId.value = simData.report_id || null
+
+      if (!currentReportId.value) {
+        await syncReportLink()
+      }
 
       // Get project info
       if (simData.project_id) {
@@ -262,6 +286,24 @@ const loadSimulationData = async () => {
     }
   } catch (err) {
     addLog(`Load error: ${err.message}`)
+  }
+}
+
+const syncReportLink = async () => {
+  if (!currentSimulationId.value) {
+    currentReportId.value = null
+    return
+  }
+
+  try {
+    const reportRes = await getReportBySimulation(currentSimulationId.value)
+    if (reportRes.success && reportRes.data?.report_id) {
+      currentReportId.value = reportRes.data.report_id
+    }
+  } catch (err) {
+    if (err?.response?.status !== 404) {
+      addLog(`Report lookup failed: ${err.message}`)
+    }
   }
 }
 
@@ -293,6 +335,16 @@ onMounted(async () => {
   await checkAndStopRunningSimulation()
 
   // Load simulation data
+  loadSimulationData()
+})
+
+watch(() => route.params.simulationId, (newId) => {
+  if (!newId || newId === currentSimulationId.value) return
+
+  currentSimulationId.value = newId
+  currentReportId.value = null
+  systemLogs.value = []
+  addLog(`Switched to simulation: ${newId}`)
   loadSimulationData()
 })
 </script>
@@ -431,4 +483,3 @@ onMounted(async () => {
   border-right: 1px solid #EAEAEA;
 }
 </style>
-

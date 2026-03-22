@@ -14,6 +14,7 @@ from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
+from .cancellation import raise_if_cancel_requested
 from .entity_reader import EntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
@@ -236,6 +237,7 @@ class SimulationManager:
         progress_callback: Optional[callable] = None,
         parallel_profile_count: int = 3,
         storage: 'GraphStorage' = None,
+        cancel_event=None,
     ) -> SimulationState:
         """
         准备模拟环境（全程自动化）
@@ -261,24 +263,27 @@ class SimulationManager:
         """
         state = self._load_simulation_state(simulation_id)
         if not state:
-            raise ValueError(f"模拟不存在: {simulation_id}")
+            raise ValueError(f"Simulation not found: {simulation_id}")
         
         try:
+            raise_if_cancel_requested(cancel_event)
             state.status = SimulationStatus.PREPARING
             self._save_simulation_state(state)
             
             sim_dir = self._get_simulation_dir(simulation_id)
             
-            # ========== 阶段1: 读取并过滤实体 ==========
+            # Stage 1: load and filter entities.
             if progress_callback:
-                progress_callback("reading", 0, "正在连接图谱...")
+                raise_if_cancel_requested(cancel_event)
+                progress_callback("reading", 0, "Connecting to the graph...")
 
             if not storage:
                 raise ValueError("storage (GraphStorage) is required for prepare_simulation")
             reader = EntityReader(storage)
             
             if progress_callback:
-                progress_callback("reading", 30, "正在读取节点数据...")
+                raise_if_cancel_requested(cancel_event)
+                progress_callback("reading", 30, "Loading entity data...")
             
             filtered = reader.filter_defined_entities(
                 graph_id=state.graph_id,
@@ -290,31 +295,33 @@ class SimulationManager:
             state.entity_types = list(filtered.entity_types)
             
             if progress_callback:
+                raise_if_cancel_requested(cancel_event)
                 progress_callback(
                     "reading", 100, 
-                    f"完成，共 {filtered.filtered_count} 个实体",
+                    f"Loaded {filtered.filtered_count} entities.",
                     current=filtered.filtered_count,
                     total=filtered.filtered_count
                 )
             
             if filtered.filtered_count == 0:
                 state.status = SimulationStatus.FAILED
-                state.error = "没有找到符合条件的实体，请检查图谱是否正确构建"
+                state.error = "No matching entities were found. Verify that the graph was built correctly."
                 self._save_simulation_state(state)
                 return state
             
-            # ========== 阶段2: 生成Agent Profile ==========
+            # Stage 2: generate agent profiles.
+            raise_if_cancel_requested(cancel_event)
             total_entities = len(filtered.entities)
             
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 0, 
-                    "开始生成...",
+                    "Starting persona generation...",
                     current=0,
                     total=total_entities
                 )
             
-            # 传入graph_id以启用图谱检索功能，获取更丰富的上下文
+            # Pass graph_id so profile generation can use graph retrieval.
             generator = OasisProfileGenerator(storage=storage, graph_id=state.graph_id)
             
             def profile_progress(current, total, msg):
@@ -328,7 +335,7 @@ class SimulationManager:
                         item_name=msg
                     )
             
-            # 设置实时保存的文件路径（优先使用 Reddit JSON 格式）
+            # Choose the realtime save target, preferring Reddit JSON.
             realtime_output_path = None
             realtime_platform = "reddit"
             if state.enable_reddit:
@@ -345,17 +352,20 @@ class SimulationManager:
                 graph_id=state.graph_id,  # 传入graph_id用于图谱检索
                 parallel_count=parallel_profile_count,  # 并行生成数量
                 realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                output_platform=realtime_platform,  # 输出格式
+                cancel_event=cancel_event,
             )
             
             state.profiles_count = len(profiles)
             
-            # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
-            # Reddit 已经在生成过程中实时保存了，这里再保存一次确保完整性
+            # Save the final profile files.
+            # Reddit is already written during generation, but we save again here
+            # to ensure the final file is complete.
+            raise_if_cancel_requested(cancel_event)
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 95, 
-                    "保存Profile文件...",
+                    "Saving generated profile files...",
                     current=total_entities,
                     total=total_entities
                 )
@@ -368,7 +378,7 @@ class SimulationManager:
                 )
             
             if state.enable_twitter:
-                # Twitter使用CSV格式！这是OASIS的要求
+                # Twitter must use CSV because OASIS expects that format.
                 generator.save_profiles(
                     profiles=profiles,
                     file_path=os.path.join(sim_dir, "twitter_profiles.csv"),
@@ -378,16 +388,17 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_profiles", 100, 
-                    f"完成，共 {len(profiles)} 个Profile",
+                    f"Generated {len(profiles)} profiles.",
                     current=len(profiles),
                     total=len(profiles)
                 )
             
-            # ========== 阶段3: LLM智能生成模拟配置 ==========
+            # Stage 3: generate the simulation config.
+            raise_if_cancel_requested(cancel_event)
             if progress_callback:
                 progress_callback(
                     "generating_config", 0, 
-                    "正在分析模拟需求...",
+                    "Analyzing the simulation requirement...",
                     current=0,
                     total=3
                 )
@@ -397,7 +408,7 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_config", 30, 
-                    "正在调用LLM生成配置...",
+                    "Generating the simulation config with the LLM...",
                     current=1,
                     total=3
                 )
@@ -410,18 +421,20 @@ class SimulationManager:
                 document_text=document_text,
                 entities=filtered.entities,
                 enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_reddit=state.enable_reddit,
+                cancel_event=cancel_event,
             )
             
+            raise_if_cancel_requested(cancel_event)
             if progress_callback:
                 progress_callback(
                     "generating_config", 70, 
-                    "正在保存配置文件...",
+                    "Saving the simulation config...",
                     current=2,
                     total=3
                 )
             
-            # 保存配置文件
+            # Save the generated config file.
             config_path = os.path.join(sim_dir, "simulation_config.json")
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.write(sim_params.to_json())
@@ -432,25 +445,27 @@ class SimulationManager:
             if progress_callback:
                 progress_callback(
                     "generating_config", 100, 
-                    "配置生成完成",
+                    "Simulation config generated.",
                     current=3,
                     total=3
                 )
             
-            # 注意：运行脚本保留在 backend/scripts/ 目录，不再复制到模拟目录
-            # 启动模拟时，simulation_runner 会从 scripts/ 目录运行脚本
+            # Simulation scripts stay in backend/scripts/ and are not copied into
+            # the simulation directory.
             
-            # 更新状态
+            # Update the simulation state.
             state.status = SimulationStatus.READY
             self._save_simulation_state(state)
             
-            logger.info(f"模拟准备完成: {simulation_id}, "
-                       f"entities={state.entities_count}, profiles={state.profiles_count}")
+            logger.info(
+                f"Simulation preparation complete: {simulation_id}, "
+                f"entities={state.entities_count}, profiles={state.profiles_count}"
+            )
             
             return state
             
         except Exception as e:
-            logger.error(f"模拟准备失败: {simulation_id}, error={str(e)}")
+            logger.error(f"Simulation preparation failed: {simulation_id}, error={str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             state.status = SimulationStatus.FAILED

@@ -4,6 +4,41 @@
     <div class="main-split-layout">
       <!-- LEFT PANEL: Report Style -->
       <div class="left-panel report-style" ref="leftPanel">
+        <div class="report-nav-actions">
+          <button
+            v-if="simulationId"
+            class="back-step-btn"
+            @click="goToSimulationRun"
+          >
+            ← Back to Run
+          </button>
+          <button
+            v-if="canCancelReport"
+            class="report-inline-btn report-inline-btn--danger"
+            :disabled="isCanceling"
+            @click="handleCancelReport"
+          >
+            {{ isCanceling ? 'Canceling…' : 'Cancel Report' }}
+          </button>
+          <button
+            v-if="canResumeReport"
+            class="report-inline-btn report-inline-btn--primary"
+            :disabled="isResuming || isRestarting"
+            @click="handleResumeReport"
+          >
+            {{ isResuming ? 'Resuming…' : 'Resume Report' }}
+          </button>
+          <button
+            v-if="canRestartReport"
+            class="report-inline-btn report-inline-btn--secondary"
+            :disabled="isRestarting || isResuming"
+            @click="handleRestartReport"
+          >
+            {{ isRestarting ? 'Starting…' : restartActionLabel }}
+          </button>
+          <span v-if="statusMessage && !isComplete" class="report-status-note">{{ statusMessage }}</span>
+        </div>
+
         <div v-if="reportOutline" class="report-content-wrapper">
           <!-- Report Header -->
           <div class="report-header-block">
@@ -72,7 +107,7 @@
             <div class="waiting-ring"></div>
             <div class="waiting-ring"></div>
           </div>
-          <span class="waiting-text">Waiting for Report Agent...</span>
+          <span class="waiting-text">{{ waitingText }}</span>
         </div>
       </div>
 
@@ -128,13 +163,15 @@
           </div>
 
           <!-- Next Step Button - Show after completion -->
-          <button v-if="isComplete" class="next-step-btn" @click="goToInteraction">
-            <span>Enter Deep Interaction</span>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-              <polyline points="12 5 19 12 12 19"></polyline>
-            </svg>
-          </button>
+          <div class="workflow-actions" v-if="isComplete">
+            <button class="next-step-btn" @click="goToInteraction">
+              <span>Enter Deep Interaction</span>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </button>
+          </div>
 
           <div class="workflow-divider"></div>
         </div>
@@ -178,6 +215,12 @@
                   <!-- Planning -->
                   <template v-if="log.action === 'planning_start'">
                     <div class="status-message planning">{{ log.details?.message }}</div>
+                  </template>
+                  <template v-if="log.action === 'report_resume'">
+                    <div class="status-message planning">{{ log.details?.message }}</div>
+                    <div class="outline-badge" v-if="log.details?.total_sections">
+                      {{ log.details?.completed_sections || 0 }}/{{ log.details.total_sections }} sections already complete
+                    </div>
                   </template>
                   <template v-if="log.action === 'planning_complete'">
                     <div class="status-message success">{{ log.details?.message }}</div>
@@ -337,6 +380,16 @@
                       <span>Report Generation Complete</span>
                     </div>
                   </template>
+                  <template v-if="log.action === 'report_canceled'">
+                    <div class="canceled-banner">
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M15 9l-6 6"></path>
+                        <path d="M9 9l6 6"></path>
+                      </svg>
+                      <span>{{ log.details?.message || 'Report generation was canceled.' }}</span>
+                    </div>
+                  </template>
                 </div>
 
                 <!-- Footer: Elapsed Time + Action Buttons -->
@@ -392,7 +445,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAgentLog, getConsoleLog } from '../api/report'
+import { cancelReportGeneration, generateReport, getAgentLog, getConsoleLog, getReportStatus } from '../api/report'
 
 const router = useRouter()
 
@@ -411,11 +464,20 @@ const goToInteraction = () => {
   }
 }
 
+const goToSimulationRun = () => {
+  if (props.simulationId) {
+    router.push({ name: 'SimulationRun', params: { simulationId: props.simulationId } })
+  }
+}
+
 // State
 const agentLogs = ref([])
 const consoleLogs = ref([])
 const agentLogLine = ref(0)
 const consoleLogLine = ref(0)
+const reportTaskId = ref(null)
+const generationStatus = ref('pending')
+const statusMessage = ref('')
 const reportOutline = ref(null)
 const currentSectionIndex = ref(null)
 const generatedSections = ref({})
@@ -428,6 +490,9 @@ const leftPanel = ref(null)
 const rightPanel = ref(null)
 const logContent = ref(null)
 const showRawResult = reactive({})
+const isCanceling = ref(false)
+const isResuming = ref(false)
+const isRestarting = ref(false)
 
 // Toggle functions
 const toggleRawResult = (timestamp, event) => {
@@ -538,6 +603,34 @@ const getToolIcon = (toolName) => {
   return toolConfig[toolName]?.icon || 'tool'
 }
 
+const findFirstMatch = (text, patterns) => {
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) return match
+  }
+  return null
+}
+
+const extractFirstValue = (text, patterns, groupIndex = 1) => {
+  const match = findFirstMatch(text, patterns)
+  return match ? match[groupIndex].trim() : ''
+}
+
+const extractFirstInt = (text, patterns, groupIndex = 1) => {
+  const match = findFirstMatch(text, patterns)
+  return match ? parseInt(match[groupIndex], 10) : 0
+}
+
+const NO_RESPONSE_PLACEHOLDERS = new Set([
+  '（该平台未获得回复）',
+  '(该平台未获得回复)',
+  '[无回复]',
+  '(No response on this platform)',
+  '[No response]',
+  'No response on this platform',
+  'No response received on this platform'
+])
+
 // Parse functions
 const parseInsightForge = (text) => {
   const result = {
@@ -551,31 +644,43 @@ const parseInsightForge = (text) => {
   }
   
   try {
-    // Extract analysis query
-    const queryMatch = text.match(/分析问题:\s*(.+?)(?:\n|$)/)
-    if (queryMatch) result.query = queryMatch[1].trim()
+    result.query = extractFirstValue(text, [
+      /Analysis Question:\s*(.+?)(?:\n|$)/i,
+      /Query:\s*(.+?)(?:\n|$)/i,
+      /分析问题:\s*(.+?)(?:\n|$)/
+    ])
 
-    // Extract prediction scenario
-    const reqMatch = text.match(/预测场景:\s*(.+?)(?:\n|$)/)
-    if (reqMatch) result.simulationRequirement = reqMatch[1].trim()
+    result.simulationRequirement = extractFirstValue(text, [
+      /Prediction Scenario:\s*(.+?)(?:\n|$)/i,
+      /预测场景:\s*(.+?)(?:\n|$)/
+    ])
 
-    // Extract statistics - match "相关预测事实: X条" format
-    const factMatch = text.match(/相关预测事实:\s*(\d+)/)
-    const entityMatch = text.match(/涉及实体:\s*(\d+)/)
-    const relMatch = text.match(/关系链:\s*(\d+)/)
-    if (factMatch) result.stats.facts = parseInt(factMatch[1])
-    if (entityMatch) result.stats.entities = parseInt(entityMatch[1])
-    if (relMatch) result.stats.relationships = parseInt(relMatch[1])
+    result.stats.facts = extractFirstInt(text, [
+      /Relevant Predictive Facts:\s*(\d+)/i,
+      /相关预测事实:\s*(\d+)/
+    ])
+    result.stats.entities = extractFirstInt(text, [
+      /Entities Involved:\s*(\d+)/i,
+      /涉及实体:\s*(\d+)/
+    ])
+    result.stats.relationships = extractFirstInt(text, [
+      /Relationship Chains:\s*(\d+)/i,
+      /关系链:\s*(\d+)/
+    ])
 
-    // Extract sub-questions - full extraction, unlimited quantity
-    const subQSection = text.match(/### 分析的子问题\n([\s\S]*?)(?=\n###|$)/)
+    const subQSection = findFirstMatch(text, [
+      /### Sub-Questions?\n([\s\S]*?)(?=\n###|$)/i,
+      /### 分析的子问题\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (subQSection) {
       const lines = subQSection[1].split('\n').filter(l => l.match(/^\d+\./))
       result.subQueries = lines.map(l => l.replace(/^\d+\.\s*/, '').trim()).filter(Boolean)
     }
 
-    // Extract key facts - full extraction, unlimited quantity
-    const factsSection = text.match(/### 【关键事实】[\s\S]*?\n([\s\S]*?)(?=\n###|$)/)
+    const factsSection = findFirstMatch(text, [
+      /### Key Facts[\s\S]*?\n([\s\S]*?)(?=\n###|$)/i,
+      /### 【关键事实】[\s\S]*?\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (factsSection) {
       const lines = factsSection[1].split('\n').filter(l => l.match(/^\d+\./))
       result.facts = lines.map(l => {
@@ -584,27 +689,30 @@ const parseInsightForge = (text) => {
       }).filter(Boolean)
     }
 
-    // Extract core entities - full extraction, with summary and related fact counts
-    const entitySection = text.match(/### 【核心实体】\n([\s\S]*?)(?=\n###|$)/)
+    const entitySection = findFirstMatch(text, [
+      /### Core Entities\n([\s\S]*?)(?=\n###|$)/i,
+      /### 【核心实体】\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (entitySection) {
       const entityText = entitySection[1]
-      // Split entity blocks by "- **"
       const entityBlocks = entityText.split(/\n(?=- \*\*)/).filter(b => b.trim().startsWith('- **'))
       result.entities = entityBlocks.map(block => {
         const nameMatch = block.match(/^-\s*\*\*(.+?)\*\*\s*\((.+?)\)/)
-        const summaryMatch = block.match(/摘要:\s*"?(.+?)"?(?:\n|$)/)
-        const relatedMatch = block.match(/相关事实:\s*(\d+)/)
+        const summaryMatch = findFirstMatch(block, [/摘要:\s*"?(.+?)"?(?:\n|$)/, /Summary:\s*"?(.+?)"?(?:\n|$)/i])
+        const relatedMatch = findFirstMatch(block, [/相关事实:\s*(\d+)/, /Related Facts:\s*(\d+)/i])
         return {
           name: nameMatch ? nameMatch[1].trim() : '',
           type: nameMatch ? nameMatch[2].trim() : '',
           summary: summaryMatch ? summaryMatch[1].trim() : '',
-          relatedFactsCount: relatedMatch ? parseInt(relatedMatch[1]) : 0
+          relatedFactsCount: relatedMatch ? parseInt(relatedMatch[1], 10) : 0
         }
       }).filter(e => e.name)
     }
 
-    // Extract relationship chains - full extraction, unlimited quantity
-    const relSection = text.match(/### 【关系链】\n([\s\S]*?)(?=\n###|$)/)
+    const relSection = findFirstMatch(text, [
+      /### Relationship Chains?\n([\s\S]*?)(?=\n###|$)/i,
+      /### 【关系链】\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (relSection) {
       const lines = relSection[1].split('\n').filter(l => l.trim().startsWith('-'))
       result.relations = lines.map(l => {
@@ -632,33 +740,44 @@ const parsePanorama = (text) => {
   }
   
   try {
-    // Extract query
-    const queryMatch = text.match(/查询:\s*(.+?)(?:\n|$)/)
-    if (queryMatch) result.query = queryMatch[1].trim()
+    result.query = extractFirstValue(text, [
+      /Query:\s*(.+?)(?:\n|$)/i,
+      /查询:\s*(.+?)(?:\n|$)/
+    ])
 
-    // Extract statistics
-    const nodesMatch = text.match(/总节点数:\s*(\d+)/)
-    const edgesMatch = text.match(/总边数:\s*(\d+)/)
-    const activeMatch = text.match(/当前有效事实:\s*(\d+)/)
-    const histMatch = text.match(/历史\/过期事实:\s*(\d+)/)
-    if (nodesMatch) result.stats.nodes = parseInt(nodesMatch[1])
-    if (edgesMatch) result.stats.edges = parseInt(edgesMatch[1])
-    if (activeMatch) result.stats.activeFacts = parseInt(activeMatch[1])
-    if (histMatch) result.stats.historicalFacts = parseInt(histMatch[1])
+    result.stats.nodes = extractFirstInt(text, [
+      /Total Nodes:\s*(\d+)/i,
+      /总节点数:\s*(\d+)/
+    ])
+    result.stats.edges = extractFirstInt(text, [
+      /Total Edges:\s*(\d+)/i,
+      /总边数:\s*(\d+)/
+    ])
+    result.stats.activeFacts = extractFirstInt(text, [
+      /Active Facts:\s*(\d+)/i,
+      /当前有效事实:\s*(\d+)/
+    ])
+    result.stats.historicalFacts = extractFirstInt(text, [
+      /Historical\/Expired Facts:\s*(\d+)/i,
+      /历史\/过期事实:\s*(\d+)/
+    ])
 
-    // Extract current active facts - full extraction, unlimited quantity
-    const activeSection = text.match(/### 【当前有效事实】[\s\S]*?\n([\s\S]*?)(?=\n###|$)/)
+    const activeSection = findFirstMatch(text, [
+      /### Active Facts[\s\S]*?\n([\s\S]*?)(?=\n###|$)/i,
+      /### 【当前有效事实】[\s\S]*?\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (activeSection) {
       const lines = activeSection[1].split('\n').filter(l => l.match(/^\d+\./))
       result.activeFacts = lines.map(l => {
-        // Remove numbering and quotes
         const factText = l.replace(/^\d+\.\s*/, '').replace(/^"|"$/g, '').trim()
         return factText
       }).filter(Boolean)
     }
 
-    // Extract historical/expired facts - full extraction, unlimited quantity
-    const histSection = text.match(/### 【历史\/过期事实】[\s\S]*?\n([\s\S]*?)(?=\n###|$)/)
+    const histSection = findFirstMatch(text, [
+      /### Historical\/Expired Facts[\s\S]*?\n([\s\S]*?)(?=\n###|$)/i,
+      /### 【历史\/过期事实】[\s\S]*?\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (histSection) {
       const lines = histSection[1].split('\n').filter(l => l.match(/^\d+\./))
       result.historicalFacts = lines.map(l => {
@@ -667,8 +786,10 @@ const parsePanorama = (text) => {
       }).filter(Boolean)
     }
 
-    // Extract involved entities - full extraction, unlimited quantity
-    const entitySection = text.match(/### 【涉及实体】\n([\s\S]*?)(?=\n###|$)/)
+    const entitySection = findFirstMatch(text, [
+      /### Involved Entities\n([\s\S]*?)(?=\n###|$)/i,
+      /### 【涉及实体】\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (entitySection) {
       const lines = entitySection[1].split('\n').filter(l => l.trim().startsWith('-'))
       result.entities = lines.map(l => {
@@ -696,20 +817,25 @@ const parseInterview = (text) => {
   }
   
   try {
-    // Extract interview topic
-    const topicMatch = text.match(/\*\*采访主题:\*\*\s*(.+?)(?:\n|$)/)
-    if (topicMatch) result.topic = topicMatch[1].trim()
+    result.topic = extractFirstValue(text, [
+      /\*\*Interview Topic:\*\*\s*(.+?)(?:\n|$)/i,
+      /\*\*采访主题:\*\*\s*(.+?)(?:\n|$)/
+    ])
 
-    // Extract interview count (e.g., "5 / 9 Simulated Agents")
-    const countMatch = text.match(/\*\*采访人数:\*\*\s*(\d+)\s*\/\s*(\d+)/)
+    const countMatch = findFirstMatch(text, [
+      /\*\*Interviewed Agents:\*\*\s*(\d+)\s*\/\s*(\d+)/i,
+      /\*\*采访人数:\*\*\s*(\d+)\s*\/\s*(\d+)/
+    ])
     if (countMatch) {
       result.successCount = parseInt(countMatch[1])
       result.totalCount = parseInt(countMatch[2])
       result.agentCount = `${countMatch[1]} / ${countMatch[2]}`
     }
 
-    // Extract selection reasoning for interview subjects
-    const reasonMatch = text.match(/### 采访对象选择理由\n([\s\S]*?)(?=\n---\n|\n### 采访实录)/)
+    const reasonMatch = findFirstMatch(text, [
+      /### Selection Rationale\n([\s\S]*?)(?=\n---\n|\n### Interview Transcript)/i,
+      /### 采访对象选择理由\n([\s\S]*?)(?=\n---\n|\n### 采访实录)/
+    ])
     if (reasonMatch) {
       result.selectionReason = reasonMatch[1].trim()
     }
@@ -739,6 +865,14 @@ const parseInterview = (text) => {
         // Format 2: - Select Name (index X): Reason
         // Example: - Select Parent_601 (index 0): As parent group representative...
         if (!headerMatch) {
+          headerMatch = line.match(/^-\s*Select\s+([^（(]+)(?:[（(]index\s*=?\s*\d+[)）])?[：:]\s*(.*)/i)
+          if (headerMatch) {
+            name = headerMatch[1].trim()
+            reasonStart = headerMatch[2]
+          }
+        }
+
+        if (!headerMatch) {
           headerMatch = line.match(/^-\s*选择([^（(]+)(?:[（(]index\s*=?\s*\d+[)）])?[：:]\s*(.*)/)
           if (headerMatch) {
             name = headerMatch[1].trim()
@@ -764,8 +898,11 @@ const parseInterview = (text) => {
           // Start new person
           currentName = name
           currentReason = reasonStart ? [reasonStart.trim()] : []
-        } else if (currentName && line.trim() && !line.match(/^未选|^综上|^最终选择/)) {
-          // Continuation of reason (exclude ending summary paragraphs)
+        } else if (
+          currentName &&
+          line.trim() &&
+          !line.match(/^Not selected|^In summary|^Final selection|^未选|^综上|^最终选择/i)
+        ) {
           currentReason.push(line.trim())
         }
       }
@@ -780,8 +917,7 @@ const parseInterview = (text) => {
 
     const individualReasons = parseIndividualReasons(result.selectionReason)
 
-    // Extract each interview record
-    const interviewBlocks = text.split(/#### 采访 #\d+:/).slice(1)
+    const interviewBlocks = text.split(/#### (?:采访|Interview) #\d+:/).slice(1)
 
     interviewBlocks.forEach((block, index) => {
       const interview = {
@@ -797,21 +933,20 @@ const parseInterview = (text) => {
         quotes: []
       }
 
-      // Extract title (e.g., "Student", "Educator", etc.)
       const titleMatch = block.match(/^(.+?)\n/)
       if (titleMatch) interview.title = titleMatch[1].trim()
 
-      // Extract name and role
       const nameRoleMatch = block.match(/\*\*(.+?)\*\*\s*\((.+?)\)/)
       if (nameRoleMatch) {
         interview.name = nameRoleMatch[1].trim()
         interview.role = nameRoleMatch[2].trim()
-        // Set selection reason for this person
         interview.selectionReason = individualReasons[interview.name] || ''
       }
 
-      // Extract bio
-      const bioMatch = block.match(/_简介:\s*([\s\S]*?)_\n/)
+    const bioMatch = findFirstMatch(block, [
+        /_Bio:\s*([\s\S]*?)_\n/i,
+        /_简介:\s*([\s\S]*?)_\n/
+      ])
       if (bioMatch) {
         interview.bio = bioMatch[1].trim().replace(/\.\.\.$/, '...')
       }
@@ -833,14 +968,15 @@ const parseInterview = (text) => {
         }
       }
 
-      // Extract answers - separate Twitter and Reddit
-      const answerMatch = block.match(/\*\*A:\*\*\s*([\s\S]*?)(?=\*\*关键引言|$)/)
+    const answerMatch = findFirstMatch(block, [
+        /\*\*A:\*\*\s*([\s\S]*?)(?=\*\*Key Quotes|$)/i,
+        /\*\*A:\*\*\s*([\s\S]*?)(?=\*\*关键引言|$)/
+      ])
       if (answerMatch) {
         const answerText = answerMatch[1].trim()
 
-        // Separate Twitter and Reddit answers
-        const twitterMatch = answerText.match(/【Twitter平台回答】\n?([\s\S]*?)(?=【Reddit平台回答】|$)/)
-        const redditMatch = answerText.match(/【Reddit平台回答】\n?([\s\S]*?)$/)
+        const twitterMatch = answerText.match(/(?:\*\*Twitter Answer:?\*\*|Twitter Answer:|【Twitter平台回答】)\n?([\s\S]*?)(?=(?:\*\*Reddit Answer:?\*\*|Reddit Answer:|【Reddit平台回答】)|$)/i)
+        const redditMatch = answerText.match(/(?:\*\*Reddit Answer:?\*\*|Reddit Answer:|【Reddit平台回答】)\n?([\s\S]*?)$/i)
 
         if (twitterMatch) {
           interview.twitterAnswer = twitterMatch[1].trim()
@@ -849,29 +985,26 @@ const parseInterview = (text) => {
           interview.redditAnswer = redditMatch[1].trim()
         }
 
-        // Platform fallback logic (compatible with old format: only one platform marker)
         if (!twitterMatch && redditMatch) {
-          // Only Reddit answer, copy as default display if not placeholder
-          if (interview.redditAnswer && interview.redditAnswer !== '（该平台未获得回复）') {
+          if (interview.redditAnswer && !isPlaceholderText(interview.redditAnswer)) {
             interview.twitterAnswer = interview.redditAnswer
           }
         } else if (twitterMatch && !redditMatch) {
-          if (interview.twitterAnswer && interview.twitterAnswer !== '（该平台未获得回复）') {
+          if (interview.twitterAnswer && !isPlaceholderText(interview.twitterAnswer)) {
             interview.redditAnswer = interview.twitterAnswer
           }
         } else if (!twitterMatch && !redditMatch) {
-          // No platform markers (very old format), use answer as-is
           interview.twitterAnswer = answerText
         }
       }
 
-      // Extract key quotes (compatible with various quote formats)
-      const quotesMatch = block.match(/\*\*关键引言:\*\*\n([\s\S]*?)(?=\n---|\n####|$)/)
+      const quotesMatch = findFirstMatch(block, [
+        /\*\*Key Quotes:\*\*\n([\s\S]*?)(?=\n---|\n####|$)/i,
+        /\*\*关键引言:\*\*\n([\s\S]*?)(?=\n---|\n####|$)/
+      ])
       if (quotesMatch) {
         const quotesText = quotesMatch[1]
-        // Prefer matching > "text" format
         let quoteMatches = quotesText.match(/> "([^"]+)"/g)
-        // Fallback: match > "text" or > "text" (Chinese quotes)
         if (!quoteMatches) {
           quoteMatches = quotesText.match(/> [\u201C""]([^\u201D""]+)[\u201D""]/g)
         }
@@ -887,8 +1020,10 @@ const parseInterview = (text) => {
       }
     })
 
-    // Extract interview summary
-    const summaryMatch = text.match(/### 采访摘要与核心观点\n([\s\S]*?)$/)
+    const summaryMatch = findFirstMatch(text, [
+      /### Interview Summary and Key Takeaways\n([\s\S]*?)$/i,
+      /### 采访摘要与核心观点\n([\s\S]*?)$/
+    ])
     if (summaryMatch) {
       result.summary = summaryMatch[1].trim()
     }
@@ -909,23 +1044,29 @@ const parseQuickSearch = (text) => {
   }
   
   try {
-    // Extract search query
-    const queryMatch = text.match(/搜索查询:\s*(.+?)(?:\n|$)/)
-    if (queryMatch) result.query = queryMatch[1].trim()
+    result.query = extractFirstValue(text, [
+      /Search Query:\s*(.+?)(?:\n|$)/i,
+      /搜索查询:\s*(.+?)(?:\n|$)/
+    ])
 
-    // Extract result count
-    const countMatch = text.match(/找到\s*(\d+)\s*条/)
-    if (countMatch) result.count = parseInt(countMatch[1])
+    result.count = extractFirstInt(text, [
+      /Found\s*(\d+)\s*results?/i,
+      /找到\s*(\d+)\s*条/
+    ])
 
-    // Extract related facts - full extraction, unlimited quantity
-    const factsSection = text.match(/### 相关事实:\n([\s\S]*)$/)
+    const factsSection = findFirstMatch(text, [
+      /### Related Facts:\n([\s\S]*)$/i,
+      /### 相关事实:\n([\s\S]*)$/
+    ])
     if (factsSection) {
       const lines = factsSection[1].split('\n').filter(l => l.match(/^\d+\./))
       result.facts = lines.map(l => l.replace(/^\d+\.\s*/, '').trim()).filter(Boolean)
     }
 
-    // Try to extract edge information (if present)
-    const edgesSection = text.match(/### 相关边:\n([\s\S]*?)(?=\n###|$)/)
+    const edgesSection = findFirstMatch(text, [
+      /### Related Edges:\n([\s\S]*?)(?=\n###|$)/i,
+      /### 相关边:\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (edgesSection) {
       const lines = edgesSection[1].split('\n').filter(l => l.trim().startsWith('-'))
       result.edges = lines.map(l => {
@@ -937,8 +1078,10 @@ const parseQuickSearch = (text) => {
       }).filter(Boolean)
     }
 
-    // Try to extract node information (if present)
-    const nodesSection = text.match(/### 相关节点:\n([\s\S]*?)(?=\n###|$)/)
+    const nodesSection = findFirstMatch(text, [
+      /### Related Nodes:\n([\s\S]*?)(?=\n###|$)/i,
+      /### 相关节点:\n([\s\S]*?)(?=\n###|$)/
+    ])
     if (nodesSection) {
       const lines = nodesSection[1].split('\n').filter(l => l.trim().startsWith('-'))
       result.nodes = lines.map(l => {
@@ -1326,8 +1469,7 @@ const InterviewDisplay = {
     // Check if text is platform placeholder
     const isPlaceholderText = (text) => {
       if (!text) return true
-      const t = text.trim()
-      return t === '（该平台未获得回复）' || t === '(该平台未获得回复)' || t === '[无回复]'
+      return NO_RESPONSE_PLACEHOLDERS.has(text.trim())
     }
 
     // Try to split answer by question numbering
@@ -1335,15 +1477,11 @@ const InterviewDisplay = {
       if (!answerText || questionCount <= 0) return [answerText]
       if (isPlaceholderText(answerText)) return ['']
 
-      // Support two numbering formats:
-      // 1. "问题X：" or "问题X:" (Chinese format, new backend format)
-      // 2. "1. " or "\n1. " (number+dot, old format compatible)
       let matches = []
       let match
 
-      // Prefer to try "问题X：" format
-      const cnPattern = /(?:^|[\r\n]+)问题(\d+)[：:]\s*/g
-      while ((match = cnPattern.exec(answerText)) !== null) {
+      const enPattern = /(?:^|[\r\n]+)(?:Question|Q)\s*(\d+)[.:：]\s*/gi
+      while ((match = enPattern.exec(answerText)) !== null) {
         matches.push({
           num: parseInt(match[1]),
           index: match.index,
@@ -1351,7 +1489,17 @@ const InterviewDisplay = {
         })
       }
 
-      // If no match, fall back to "number." format
+      if (matches.length === 0) {
+        const cnPattern = /(?:^|[\r\n]+)问题(\d+)[：:]\s*/g
+        while ((match = cnPattern.exec(answerText)) !== null) {
+          matches.push({
+            num: parseInt(match[1]),
+            index: match.index,
+            fullMatch: match[0]
+          })
+        }
+      }
+
       if (matches.length === 0) {
         const numPattern = /(?:^|[\r\n]+)(\d+)\.\s+/g
         while ((match = numPattern.exec(answerText)) !== null) {
@@ -1367,6 +1515,7 @@ const InterviewDisplay = {
       if (matches.length <= 1) {
         const cleaned = answerText
           .replace(/^问题\d+[：:]\s*/, '')
+          .replace(/^(?:Question|Q)\s*\d+[.:]\s*/i, '')
           .replace(/^\d+\.\s+/, '')
           .trim()
         return [cleaned || answerText]
@@ -1702,15 +1851,74 @@ const QuickSearchDisplay = {
 
 // Computed
 const statusClass = computed(() => {
-  if (isComplete.value) return 'completed'
-  if (agentLogs.value.length > 0) return 'processing'
+  if (isComplete.value || generationStatus.value === 'completed') return 'completed'
+  if (generationStatus.value === 'canceled') return 'canceled'
+  if (generationStatus.value === 'failed') return 'error'
+  if (
+    isCanceling.value ||
+    generationStatus.value === 'planning' ||
+    generationStatus.value === 'generating' ||
+    generationStatus.value === 'processing' ||
+    agentLogs.value.length > 0
+  ) return 'processing'
   return 'pending'
 })
 
 const statusText = computed(() => {
-  if (isComplete.value) return 'Completed'
-  if (agentLogs.value.length > 0) return 'Generating...'
+  if (isComplete.value || generationStatus.value === 'completed') return 'Completed'
+  if (generationStatus.value === 'canceled') return 'Canceled'
+  if (generationStatus.value === 'failed') return 'Failed'
+  if (isCanceling.value) return 'Canceling...'
+  if (
+    generationStatus.value === 'planning' ||
+    generationStatus.value === 'generating' ||
+    generationStatus.value === 'processing' ||
+    agentLogs.value.length > 0
+  ) return 'Generating...'
   return 'Waiting'
+})
+
+const canCancelReport = computed(() => {
+  return Boolean(
+    props.reportId &&
+    !isComplete.value &&
+    generationStatus.value !== 'completed' &&
+    generationStatus.value !== 'canceled' &&
+    generationStatus.value !== 'failed'
+  )
+})
+
+const canResumeReport = computed(() => {
+  return Boolean(
+    props.reportId &&
+    props.simulationId &&
+    !isComplete.value &&
+    (generationStatus.value === 'canceled' || generationStatus.value === 'failed')
+  )
+})
+
+const canRestartReport = computed(() => {
+  return Boolean(
+    props.simulationId &&
+    (generationStatus.value === 'canceled' || generationStatus.value === 'failed')
+  )
+})
+
+const restartActionLabel = computed(() => {
+  return canResumeReport.value ? 'Start Fresh' : 'Generate Again'
+})
+
+const waitingText = computed(() => {
+  if (isCanceling.value) {
+    return 'Waiting for the current section to stop cleanly...'
+  }
+  if (generationStatus.value === 'canceled') {
+    return 'Report generation was canceled. Resume it or start fresh when you are ready.'
+  }
+  if (generationStatus.value === 'failed') {
+    return statusMessage.value || 'Report generation failed. Resume it or start fresh when you are ready.'
+  }
+  return 'Waiting for Report Agent...'
 })
 
 const totalSections = computed(() => {
@@ -1973,7 +2181,7 @@ const renderMarkdown = (content) => {
 
 const getTimelineItemClass = (log, idx, total) => {
   const isLatest = idx === total - 1 && !isComplete.value
-  const isMilestone = log.action === 'section_complete' || log.action === 'report_complete'
+  const isMilestone = log.action === 'section_complete' || log.action === 'report_complete' || log.action === 'report_canceled'
   return {
     'node--active': isLatest,
     'node--done': !isLatest && isMilestone,
@@ -1985,13 +2193,14 @@ const getTimelineItemClass = (log, idx, total) => {
 const getConnectorClass = (log, idx, total) => {
   const isLatest = idx === total - 1 && !isComplete.value
   if (isLatest) return 'dot-active'
-  if (log.action === 'section_complete' || log.action === 'report_complete') return 'dot-done'
+  if (log.action === 'section_complete' || log.action === 'report_complete' || log.action === 'report_canceled') return 'dot-done'
   return 'dot-muted'
 }
 
 const getActionLabel = (action) => {
   const labels = {
     'report_start': 'Report Started',
+    'report_resume': 'Resumed',
     'planning_start': 'Planning',
     'planning_complete': 'Plan Complete',
     'section_start': 'Section Start',
@@ -2000,21 +2209,22 @@ const getActionLabel = (action) => {
     'tool_call': 'Tool Call',
     'tool_result': 'Tool Result',
     'llm_response': 'LLM Response',
-    'report_complete': 'Complete'
+    'report_complete': 'Complete',
+    'report_canceled': 'Canceled'
   }
   return labels[action] || action
 }
 
 const getLogLevelClass = (log) => {
-  if (log.includes('ERROR') || log.includes('错误')) return 'error'
-  if (log.includes('WARNING') || log.includes('警告')) return 'warning'
-  // INFO uses default color, not marked as success
+  if (log.includes('ERROR') || log.includes('error') || log.includes('错误')) return 'error'
+  if (log.includes('WARNING') || log.includes('warning') || log.includes('警告')) return 'warning'
   return ''
 }
 
 // Polling
 let agentLogTimer = null
 let consoleLogTimer = null
+let statusTimer = null
 
 const fetchAgentLog = async () => {
   if (!props.reportId) return
@@ -2049,14 +2259,38 @@ const fetchAgentLog = async () => {
           
           if (log.action === 'report_complete') {
             isComplete.value = true
+            generationStatus.value = 'completed'
+            statusMessage.value = log.details?.message || 'Report generation completed.'
+            isCanceling.value = false
+            isResuming.value = false
             currentSectionIndex.value = null  // Ensure loading state is cleared
             emit('update-status', 'completed')
             stopPolling()
             // Scroll logic handled uniformly in nextTick after loop
           }
+
+          if (log.action === 'report_canceled') {
+            generationStatus.value = 'canceled'
+            statusMessage.value = log.details?.message || 'Report generation was canceled.'
+            isCanceling.value = false
+            isResuming.value = false
+            currentSectionIndex.value = null
+            emit('update-status', 'canceled')
+            stopPolling()
+          }
           
           if (log.action === 'report_start') {
             startTime.value = new Date(log.timestamp)
+            generationStatus.value = 'generating'
+          }
+
+          if (log.action === 'report_resume') {
+            startTime.value = new Date(log.timestamp)
+            generationStatus.value = 'generating'
+            statusMessage.value = log.details?.message || 'Resuming report generation...'
+            isCanceling.value = false
+            isResuming.value = false
+            emit('update-status', 'processing')
           }
         })
         
@@ -2097,7 +2331,6 @@ const extractFinalContent = (response) => {
     return finalAnswerMatch[1].trim()
   }
 
-  // Try to find content after "最终答案:"
   const chineseFinalMatch = response.match(/最终答案[:：]\s*\n*([\s\S]*)$/i)
   if (chineseFinalMatch) {
     return chineseFinalMatch[1].trim()
@@ -2149,14 +2382,73 @@ const fetchConsoleLog = async () => {
   }
 }
 
+const fetchReportTaskStatus = async () => {
+  if (!props.reportId) return
+
+  try {
+    const res = await getReportStatus({
+      task_id: reportTaskId.value || undefined,
+      report_id: props.reportId,
+      simulation_id: props.simulationId
+    })
+
+    if (!(res.success && res.data)) return
+
+    const data = res.data
+    reportTaskId.value = data.task_id || reportTaskId.value
+    generationStatus.value = data.status || generationStatus.value
+    statusMessage.value = data.message || statusMessage.value
+
+    if ((data.message || '').toLowerCase().includes('cancellation requested')) {
+      isCanceling.value = true
+    }
+
+    if (data.status === 'completed') {
+      isCanceling.value = false
+      isResuming.value = false
+      emit('update-status', 'completed')
+      await fetchAgentLog()
+      await fetchConsoleLog()
+      stopPolling()
+      return
+    }
+
+    if (data.status === 'canceled') {
+      isCanceling.value = false
+      isResuming.value = false
+      emit('update-status', 'canceled')
+      await fetchAgentLog()
+      await fetchConsoleLog()
+      stopPolling()
+      return
+    }
+
+    if (data.status === 'failed') {
+      isCanceling.value = false
+      isResuming.value = false
+      emit('update-status', 'error')
+      await fetchAgentLog()
+      await fetchConsoleLog()
+      stopPolling()
+      return
+    }
+
+    emit('update-status', 'processing')
+  } catch (err) {
+    console.warn('Failed to fetch report task status:', err)
+  }
+}
+
 const startPolling = () => {
-  if (agentLogTimer || consoleLogTimer) return
+  if (agentLogTimer || consoleLogTimer || statusTimer) return
   
   fetchAgentLog()
   fetchConsoleLog()
+  fetchReportTaskStatus()
   
   agentLogTimer = setInterval(fetchAgentLog, 2000)
   consoleLogTimer = setInterval(fetchConsoleLog, 1500)
+  statusTimer = setInterval(fetchReportTaskStatus, 2000)
 }
 
 const stopPolling = () => {
@@ -2167,6 +2459,104 @@ const stopPolling = () => {
   if (consoleLogTimer) {
     clearInterval(consoleLogTimer)
     consoleLogTimer = null
+  }
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
+}
+
+const handleCancelReport = async () => {
+  if (!props.reportId || isCanceling.value) return
+
+  const shouldCancel = window.confirm(
+    'Cancel the current report generation? Any finished sections will stay visible, and you can generate the report again later.'
+  )
+
+  if (!shouldCancel) return
+
+  isCanceling.value = true
+  statusMessage.value = 'Cancellation requested. Waiting for the current section to stop.'
+  addLog('Canceling report generation...')
+
+  try {
+    const res = await cancelReportGeneration({
+      task_id: reportTaskId.value || undefined,
+      report_id: props.reportId,
+      simulation_id: props.simulationId
+    })
+
+    if (res.success && res.data?.message) {
+      statusMessage.value = res.data.message
+      addLog(res.data.message)
+    }
+  } catch (err) {
+    isCanceling.value = false
+    statusMessage.value = ''
+    addLog(`Failed to cancel report generation: ${err.message}`)
+  }
+}
+
+const handleResumeReport = async () => {
+  if (!props.simulationId || !props.reportId || isResuming.value) return
+
+  isResuming.value = true
+  addLog('Resuming report generation from saved progress...')
+
+  try {
+    const res = await generateReport({
+      simulation_id: props.simulationId,
+      report_id: props.reportId,
+      resume_existing: true
+    })
+
+    if (res.success && res.data?.report_id) {
+      reportTaskId.value = res.data.task_id || reportTaskId.value
+      generationStatus.value = 'processing'
+      statusMessage.value = res.data.message || 'Resuming report generation...'
+      emit('update-status', 'processing')
+      addLog(statusMessage.value)
+
+      if (res.data.report_id !== props.reportId) {
+        router.push({ name: 'Report', params: { reportId: res.data.report_id } })
+        return
+      }
+
+      startPolling()
+      return
+    }
+
+    addLog(`Failed to resume report generation: ${res.error || 'Unknown error'}`)
+  } catch (err) {
+    addLog(`Report resume failed: ${err.message}`)
+  } finally {
+    isResuming.value = false
+  }
+}
+
+const handleRestartReport = async () => {
+  if (!props.simulationId || isRestarting.value) return
+
+  isRestarting.value = true
+  addLog('Starting a fresh report generation run...')
+
+  try {
+    const res = await generateReport({
+      simulation_id: props.simulationId,
+      force_regenerate: true
+    })
+
+    if (res.success && res.data?.report_id) {
+      addLog(`✓ Report generation task started: ${res.data.report_id}`)
+      router.push({ name: 'Report', params: { reportId: res.data.report_id } })
+      return
+    }
+
+    addLog(`Failed to restart report generation: ${res.error || 'Unknown error'}`)
+  } catch (err) {
+    addLog(`Report restart failed: ${err.message}`)
+  } finally {
+    isRestarting.value = false
   }
 }
 
@@ -2184,10 +2574,14 @@ onUnmounted(() => {
 
 watch(() => props.reportId, (newId) => {
   if (newId) {
+    stopPolling()
     agentLogs.value = []
     consoleLogs.value = []
     agentLogLine.value = 0
     consoleLogLine.value = 0
+    reportTaskId.value = null
+    generationStatus.value = 'pending'
+    statusMessage.value = ''
     reportOutline.value = null
     currentSectionIndex.value = null
     generatedSections.value = {}
@@ -2195,6 +2589,9 @@ watch(() => props.reportId, (newId) => {
     expandedLogs.value = new Set()
     collapsedSections.value = new Set()
     isComplete.value = false
+    isCanceling.value = false
+    isResuming.value = false
+    isRestarting.value = false
     startTime.value = null
     
     startPolling()
@@ -2769,6 +3166,18 @@ watch(() => props.reportId, (newId) => {
   background: #ECFDF5;
   border-color: #A7F3D0;
   color: #065F46;
+}
+
+.metric-pill.pill--canceled {
+  background: #F3F4F6;
+  border-color: #D1D5DB;
+  color: #4B5563;
+}
+
+.metric-pill.pill--error {
+  background: #FEF2F2;
+  border-color: #FECACA;
+  color: #991B1B;
 }
 
 .metric-pill.pill--pending {
@@ -3397,13 +3806,125 @@ watch(() => props.reportId, (newId) => {
   font-size: 14px;
 }
 
+.canceled-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #F3F4F6;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  color: #374151;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.report-nav-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.back-step-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid #d6d6d6;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #333333;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.back-step-btn:hover {
+  border-color: #111111;
+  color: #111111;
+  transform: translateY(-1px);
+}
+
+.report-inline-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.report-inline-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+  transform: none;
+}
+
+.report-inline-btn--primary {
+  background: #111827;
+  border-color: #111827;
+  color: #FFFFFF;
+}
+
+.report-inline-btn--primary:hover:not(:disabled) {
+  background: #1F2937;
+  border-color: #1F2937;
+  transform: translateY(-1px);
+}
+
+.report-inline-btn--secondary {
+  background: #FFFFFF;
+  border-color: #D1D5DB;
+  color: #111827;
+}
+
+.report-inline-btn--secondary:hover:not(:disabled) {
+  background: #F9FAFB;
+  border-color: #9CA3AF;
+  transform: translateY(-1px);
+}
+
+.report-inline-btn--danger {
+  background: #FFFFFF;
+  border-color: #FCA5A5;
+  color: #B91C1C;
+}
+
+.report-inline-btn--danger:hover:not(:disabled) {
+  background: #FEF2F2;
+  border-color: #EF4444;
+  transform: translateY(-1px);
+}
+
+.report-status-note {
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.5;
+}
+
+.workflow-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 20px 0 20px;
+}
+
 .next-step-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: calc(100% - 40px);
-  margin: 4px 20px 0 20px;
+  width: fit-content;
+  min-width: 240px;
+  margin: 0;
   padding: 14px 20px;
   font-size: 14px;
   font-weight: 600;

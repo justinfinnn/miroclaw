@@ -22,8 +22,8 @@
 
       <div class="header-right">
         <div class="workflow-step">
-          <span class="step-num">Step {{ currentStep }}/5</span>
-          <span class="step-name">{{ stepNames[currentStep - 1] }}</span>
+          <span class="step-num">Step 2/6</span>
+          <span class="step-name">Graph</span>
         </div>
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -32,6 +32,16 @@
         </span>
       </div>
     </header>
+
+    <WorkflowStepper
+      current="graph"
+      :project-id="currentProjectId"
+    />
+
+    <WorkflowQuickActions
+      current="graph"
+      :project-id="currentProjectId"
+    />
 
     <!-- Main Content Area -->
     <main class="content-area">
@@ -48,26 +58,14 @@
 
       <!-- Right Panel: Step Components -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
-        <!-- Step 1: Graph Build -->
         <Step1GraphBuild 
-          v-if="currentStep === 1"
+          :key="currentProjectId"
           :currentPhase="currentPhase"
           :projectData="projectData"
           :ontologyProgress="ontologyProgress"
           :buildProgress="buildProgress"
           :graphData="graphData"
           :systemLogs="systemLogs"
-          @next-step="handleNextStep"
-        />
-        <!-- Step 2: Env Setup -->
-        <Step2EnvSetup
-          v-else-if="currentStep === 2"
-          :projectData="projectData"
-          :graphData="graphData"
-          :systemLogs="systemLogs"
-          @go-back="handleGoBack"
-          @next-step="handleNextStep"
-          @add-log="addLog"
         />
       </div>
     </main>
@@ -79,7 +77,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
-import Step2EnvSetup from '../components/Step2EnvSetup.vue'
+import WorkflowStepper from '../components/WorkflowStepper.vue'
+import WorkflowQuickActions from '../components/WorkflowQuickActions.vue'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 
@@ -88,10 +87,6 @@ const router = useRouter()
 
 // Layout State
 const viewMode = ref('split') // graph | split | workbench
-
-// Step State
-const currentStep = ref(1) // 1: Graph Build, 2: Env Setup, 3: Simulation, 4: Report, 5: Interaction
-const stepNames = ['Graph Build', 'Env Setup', 'Simulation', 'Report', 'Interaction']
 
 // Data State
 const currentProjectId = ref(route.params.projectId)
@@ -153,25 +148,6 @@ const toggleMaximize = (target) => {
     viewMode.value = 'split'
   } else {
     viewMode.value = target
-  }
-}
-
-const handleNextStep = (params = {}) => {
-  if (currentStep.value < 5) {
-    currentStep.value++
-    addLog(`Entering Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
-
-    // If entering Step 3 from Step 2, log simulation round config
-    if (currentStep.value === 3 && params.maxRounds) {
-      addLog(`Custom simulation rounds: ${params.maxRounds}`)
-    }
-  }
-}
-
-const handleGoBack = () => {
-  if (currentStep.value > 1) {
-    currentStep.value--
-    addLog(`Back to Step ${currentStep.value}: ${stepNames[currentStep.value - 1]}`)
   }
 }
 
