@@ -10,10 +10,19 @@ export const generateReport = (data) => {
 
 /**
  * Get report generation status
- * @param {string} reportId
+ * @param {Object|string} data - { task_id?, report_id?, simulation_id? } or a reportId string
  */
-export const getReportStatus = (reportId) => {
-  return service.get(`/api/report/generate/status`, { params: { report_id: reportId } })
+export const getReportStatus = (data) => {
+  const payload = typeof data === 'string' ? { report_id: data } : (data || {})
+  return service.post('/api/report/generate/status', payload)
+}
+
+/**
+ * Request cooperative cancellation for report generation
+ * @param {Object} data - { task_id?, report_id?, simulation_id? }
+ */
+export const cancelReportGeneration = (data) => {
+  return service.post('/api/report/generate/cancel', data)
 }
 
 /**
@@ -40,6 +49,14 @@ export const getConsoleLog = (reportId, fromLine = 0) => {
  */
 export const getReport = (reportId) => {
   return service.get(`/api/report/${reportId}`)
+}
+
+/**
+ * Get the latest report for a simulation
+ * @param {string} simulationId
+ */
+export const getReportBySimulation = (simulationId) => {
+  return service.get(`/api/report/by-simulation/${simulationId}`)
 }
 
 /**

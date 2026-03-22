@@ -22,7 +22,7 @@
 
       <div class="header-right">
         <div class="workflow-step">
-          <span class="step-num">Step 5/5</span>
+          <span class="step-num">Step 6/6</span>
           <span class="step-name">Interaction</span>
         </div>
         <div class="step-divider"></div>
@@ -32,6 +32,20 @@
         </span>
       </div>
     </header>
+
+    <WorkflowStepper
+      current="chat"
+      :project-id="projectData?.project_id"
+      :simulation-id="simulationId"
+      :report-id="currentReportId"
+    />
+
+    <WorkflowQuickActions
+      current="chat"
+      :project-id="projectData?.project_id"
+      :simulation-id="simulationId"
+      :report-id="currentReportId"
+    />
 
     <!-- Main Content Area -->
     <main class="content-area">
@@ -50,6 +64,7 @@
       <!-- Right Panel: Step5 Interaction -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <Step5Interaction
+          :key="currentReportId"
           :reportId="currentReportId"
           :simulationId="simulationId"
           :systemLogs="systemLogs"
@@ -66,6 +81,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
+import WorkflowStepper from '../components/WorkflowStepper.vue'
+import WorkflowQuickActions from '../components/WorkflowQuickActions.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'

@@ -1,8 +1,36 @@
 import axios from 'axios'
 
+const resolveApiBaseUrl = () => {
+  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
+  return configuredBaseUrl || ''
+}
+
+export const getApiConnectionInfo = () => {
+  const configuredBaseUrl = resolveApiBaseUrl()
+  const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+
+  if (!configuredBaseUrl) {
+    return {
+      browserOrigin,
+      configuredBaseUrl: '',
+      effectiveApiOrigin: browserOrigin,
+      mode: 'same-origin'
+    }
+  }
+
+  const normalizedUrl = new URL(configuredBaseUrl, browserOrigin || 'http://localhost')
+
+  return {
+    browserOrigin,
+    configuredBaseUrl,
+    effectiveApiOrigin: normalizedUrl.origin,
+    mode: 'explicit'
+  }
+}
+
 // Create axios instance
 const service = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001',
+  baseURL: resolveApiBaseUrl(),
   timeout: 300000, // 5 minute timeout (ontology generation may require longer time)
   headers: {
     'Content-Type': 'application/json'

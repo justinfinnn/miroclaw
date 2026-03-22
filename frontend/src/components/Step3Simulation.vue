@@ -91,6 +91,21 @@
       </div>
 
       <div class="action-controls">
+        <button
+          class="action-btn secondary"
+          :disabled="isStopping || isGeneratingReport"
+          @click="$emit('go-back')"
+        >
+          ← Back to Setup
+        </button>
+        <button
+          class="action-btn danger"
+          :disabled="phase !== 1 || isStopping || isGeneratingReport"
+          @click="handleStopClick"
+        >
+          <span v-if="isStopping" class="loading-spinner-small"></span>
+          {{ isStopping ? 'Stopping...' : 'Stop Simulation' }}
+        </button>
         <button 
           class="action-btn primary"
           :disabled="phase !== 2 || isGeneratingReport"
@@ -459,6 +474,18 @@ const handleStopSimulation = async () => {
   }
 }
 
+const handleStopClick = () => {
+  if (isStopping.value || phase.value !== 1) return
+
+  const shouldStop = window.confirm(
+    'Stop the current simulation run? You can still generate a report from the data collected so far.'
+  )
+
+  if (shouldStop) {
+    handleStopSimulation()
+  }
+}
+
 // Polling status
 let statusTimer = null
 let detailTimer = null
@@ -723,6 +750,12 @@ onUnmounted(() => {
   gap: 12px;
 }
 
+.action-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* Platform Status Cards */
 .platform-status {
   display: flex;
@@ -891,6 +924,25 @@ onUnmounted(() => {
 
 .action-btn.primary:hover:not(:disabled) {
   background: #333;
+}
+
+.action-btn.secondary {
+  background: #F5F5F5;
+  color: #333;
+}
+
+.action-btn.secondary:hover:not(:disabled) {
+  background: #E7E7E7;
+}
+
+.action-btn.danger {
+  background: #fff5f3;
+  color: #b33b23;
+  border: 1px solid #f2b8ad;
+}
+
+.action-btn.danger:hover:not(:disabled) {
+  background: #ffe7e2;
 }
 
 .action-btn:disabled {

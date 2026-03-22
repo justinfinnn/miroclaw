@@ -22,7 +22,7 @@
 
       <div class="header-right">
         <div class="workflow-step">
-          <span class="step-num">Step 4/5</span>
+          <span class="step-num">Step 5/6</span>
           <span class="step-name">Report</span>
         </div>
         <div class="step-divider"></div>
@@ -32,6 +32,20 @@
         </span>
       </div>
     </header>
+
+    <WorkflowStepper
+      current="report"
+      :project-id="projectData?.project_id"
+      :simulation-id="simulationId"
+      :report-id="currentReportId"
+    />
+
+    <WorkflowQuickActions
+      current="report"
+      :project-id="projectData?.project_id"
+      :simulation-id="simulationId"
+      :report-id="currentReportId"
+    />
 
     <!-- Main Content Area -->
     <main class="content-area">
@@ -50,6 +64,7 @@
       <!-- Right Panel: Step4 Report -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <Step4Report
+          :key="currentReportId"
           :reportId="currentReportId"
           :simulationId="simulationId"
           :systemLogs="systemLogs"
@@ -66,6 +81,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step4Report from '../components/Step4Report.vue'
+import WorkflowStepper from '../components/WorkflowStepper.vue'
+import WorkflowQuickActions from '../components/WorkflowQuickActions.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation } from '../api/simulation'
 import { getReport } from '../api/report'
@@ -88,7 +105,7 @@ const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
-const currentStatus = ref('processing') // processing | completed | error
+const currentStatus = ref('processing') // processing | completed | canceled | error
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -110,6 +127,7 @@ const statusClass = computed(() => {
 
 const statusText = computed(() => {
   if (currentStatus.value === 'error') return 'Error'
+  if (currentStatus.value === 'canceled') return 'Canceled'
   if (currentStatus.value === 'completed') return 'Completed'
   return 'Generating'
 })
@@ -323,6 +341,7 @@ onMounted(() => {
 
 .status-indicator.processing .dot { background: #FF9800; animation: pulse 1s infinite; }
 .status-indicator.completed .dot { background: #4CAF50; }
+.status-indicator.canceled .dot { background: #9CA3AF; }
 .status-indicator.error .dot { background: #F44336; }
 
 @keyframes pulse { 50% { opacity: 0.5; } }

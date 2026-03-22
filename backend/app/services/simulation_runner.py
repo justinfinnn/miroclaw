@@ -434,6 +434,20 @@ class SimulationRunner:
             env = os.environ.copy()
             env['PYTHONUTF8'] = '1'  # Python 3.7+ 支持，让所有 open() 默认使用 UTF-8
             env['PYTHONIOENCODING'] = 'utf-8'  # 确保 stdout/stderr 使用 UTF-8
+            flask_port = env.get('FLASK_PORT', '5001')
+            env['MIROCLAW_OPENAI_ADAPTER_URL'] = env.get(
+                'MIROCLAW_OPENAI_ADAPTER_URL',
+                f'http://127.0.0.1:{flask_port}/v1'
+            )
+            env['MODELING_BACKEND'] = Config.MODELING_BACKEND or 'ollama'
+            env['LLM_API_KEY'] = Config.LLM_API_KEY or ''
+            env['LLM_BASE_URL'] = Config.LLM_BASE_URL or ''
+            env['LLM_MODEL_NAME'] = Config.LLM_MODEL_NAME or ''
+            env['CODEX_MODEL_NAME'] = Config.CODEX_MODEL_NAME or ''
+            env['OPENCLAW_PROVIDER'] = Config.OPENCLAW_PROVIDER or ''
+            env['OPENCLAW_MODEL'] = Config.OPENCLAW_MODEL or ''
+            env['EMBEDDING_BASE_URL'] = Config.EMBEDDING_BASE_URL or ''
+            env['EMBEDDING_MODEL'] = Config.EMBEDDING_MODEL or ''
             
             # 设置工作目录为模拟目录（数据库等文件会生成在此）
             # 使用 start_new_session=True 创建新的进程组，确保可以通过 os.killpg 终止所有子进程
@@ -1763,4 +1777,3 @@ class SimulationRunner:
             results = results[:limit]
         
         return results
-

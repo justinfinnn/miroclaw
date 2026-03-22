@@ -67,6 +67,12 @@ from flask import Blueprint, jsonify, redirect, request
 from ..config import Config
 from ..services.llm_credential_store import CredentialStore, OAuthCredential
 from ..services.oauth_state_store import OAuthStateStore, PKCEHelper
+from ..services.runtime_settings import (
+    apply_runtime_settings,
+    get_modeling_settings,
+    get_ollama_status,
+    get_saved_modeling_settings,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger("mirofish.api.auth")
@@ -171,9 +177,112 @@ def _provider_limitation_response(missing_vars: list[str]):
     ), 501
 
 
+def _get_ollama_probe_base_url(current_settings: dict) -> str:
+    llm_base_url = current_settings.get("llm_base_url")
+    if current_settings.get("modeling_backend") == "ollama" or "11434" in (llm_base_url or ""):
+        return llm_base_url or "http://127.0.0.1:11434/v1"
+    return "http://127.0.0.1:11434/v1"
+
+
+def _build_modeling_status_data(request_origin: str) -> dict:
+    current_settings = get_modeling_settings()
+    saved_settings = get_saved_modeling_settings()
+    configured_openclaw_provider = current_settings.get("openclaw_provider") or "(auto-detect)"
+    configured_openclaw_model = current_settings.get("openclaw_model") or "(provider default)"
+
+    ollama_status = get_ollama_status(_get_ollama_probe_base_url(current_settings))
+    ollama_llm_configured = "11434" in (current_settings.get("llm_base_url") or "")
+    ollama_embeddings_configured = "11434" in (current_settings.get("embedding_base_url") or "")
+
+    return {
+        "service": "MiroClaw",
+        "available_backends": ["ollama", "api_key", "codex", "openclaw"],
+        "request_origin": request_origin,
+        "openai_compat_base_url": f"{request_origin}/v1",
+        "current_settings": current_settings,
+        "saved_settings": saved_settings,
+        "modeling_backend": current_settings["modeling_backend"],
+        "llm": {
+            "base_url": current_settings["llm_base_url"],
+            "model": current_settings["llm_model_name"],
+        },
+        "codex": {
+            "model": current_settings["codex_model_name"],
+        },
+        "openclaw": {
+            "provider": configured_openclaw_provider,
+            "model": configured_openclaw_model,
+        },
+        "embedding": {
+            "base_url": current_settings["embedding_base_url"],
+            "model": current_settings["embedding_model"],
+        },
+        "ollama": ollama_status,
+        "offline_readiness": {
+            "ollama_llm_configured": ollama_llm_configured,
+            "ollama_embeddings_configured": ollama_embeddings_configured,
+            "backend_is_offline_first": current_settings["modeling_backend"] == "ollama",
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Routes — Status
 # ---------------------------------------------------------------------------
+
+
+@auth_bp.route("/modeling/status", methods=["GET"])
+def modeling_status():
+    """Return a compact summary of backend/model endpoint configuration."""
+    request_origin = request.host_url.rstrip("/")
+    return jsonify(
+        {
+            "success": True,
+            "data": _build_modeling_status_data(request_origin),
+        }
+    )
+
+
+@auth_bp.route("/modeling/config", methods=["POST"])
+def modeling_config():
+    """Update runtime-selectable modeling settings and persist them locally."""
+    body = request.get_json(silent=True) or {}
+    allowed_keys = {
+        "modeling_backend",
+        "llm_base_url",
+        "llm_model_name",
+        "codex_model_name",
+        "openclaw_provider",
+        "openclaw_model",
+        "embedding_base_url",
+        "embedding_model",
+    }
+    updates = {
+        key: body[key]
+        for key in allowed_keys
+        if key in body
+    }
+
+    if not updates:
+        return jsonify({
+            "success": False,
+            "error": "No modeling settings were provided.",
+        }), 400
+
+    try:
+        apply_runtime_settings(updates, persist=True)
+    except ValueError as exc:
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 400
+
+    request_origin = request.host_url.rstrip("/")
+    return jsonify({
+        "success": True,
+        "message": "Modeling settings updated.",
+        "data": _build_modeling_status_data(request_origin),
+    })
 
 
 @auth_bp.route("/openai/status", methods=["GET"])
@@ -666,6 +775,7 @@ def codex_status():
         "data": {
             "modeling_backend": Config.MODELING_BACKEND,
             "codex_mode_active": Config.MODELING_BACKEND == "codex",
+            "codex_model": Config.CODEX_MODEL_NAME,
             "bridge": bridge_status,
             "recommendation": (
                 "Set MODELING_BACKEND=codex in .env and call POST /api/auth/codex/sync"
@@ -673,7 +783,7 @@ def codex_status():
                 else (
                     "Codex mode is ready — MODELING_BACKEND=codex will use the OpenClaw token"
                     if bridge_status.get("ready_for_codex_mode")
-                    else "OpenClaw openai-codex profile not found. Ensure OpenClaw is installed and logged in."
+                    else "OpenClaw openai-codex profile not found. Import auth-profiles.json from the remote OpenClaw machine or install OpenClaw locally."
                 )
             ),
         },
@@ -708,8 +818,9 @@ def codex_sync():
             "error": "Could not import token from OpenClaw",
             "bridge_status": bridge_status,
             "hint": (
-                "Ensure OpenClaw is installed (~/.openclaw) and you have logged in "
-                "with your OpenAI/Codex account via the OpenClaw UI."
+                "Import auth-profiles.json from the OpenClaw machine into MiroClaw, "
+                "or ensure OpenClaw is installed locally (~/.openclaw) and logged in "
+                "with your OpenAI/Codex account."
             ),
         }), 404
 
@@ -724,8 +835,8 @@ def codex_sync():
             "has_refresh_token": bool(cred.refresh_token),
         },
         "next_step": (
-            "Set MODELING_BACKEND=codex in .env and restart the server. "
-            "All LLM calls will now route through your OpenAI/Codex OAuth token."
+            "Select Codex in the runtime configuration panel, or set MODELING_BACKEND=codex in .env. "
+            "New LLM calls can now route through your OpenAI/Codex OAuth token."
         ),
     })
 
@@ -734,6 +845,108 @@ def codex_sync():
 # ---------------------------------------------------------------------------
 # Routes — OpenClaw Provider Discovery
 # ---------------------------------------------------------------------------
+
+
+@auth_bp.route("/openclaw/import", methods=["POST"])
+def openclaw_import():
+    """
+    Import a remote OpenClaw auth-profiles payload into MiroClaw-managed storage.
+
+    Accepted JSON body shapes:
+      - {"profiles_json": "<raw auth-profiles.json string>"}
+      - {"payload": {...full auth-profiles payload...}}
+      - {"profiles": {...profiles mapping...}}
+
+    Optional fields:
+      - source_label: human-readable label for where the import came from
+      - replace: bool, default true
+      - sync_codex: bool, default true
+    """
+    from ..services.managed_openclaw_store import ManagedOpenClawProfileStore
+    from ..services.openclaw_bridge import get_bridge
+
+    body = request.get_json(silent=True) or {}
+    replace = bool(body.get("replace", True))
+    sync_codex = bool(body.get("sync_codex", True))
+    source_label = (body.get("source_label") or "Imported OpenClaw profiles").strip()
+
+    import_payload = None
+    if "profiles_json" in body:
+        import_payload = body.get("profiles_json")
+    elif "payload" in body:
+        import_payload = body.get("payload")
+    elif "profiles" in body:
+        import_payload = {"profiles": body.get("profiles")}
+    else:
+        passthrough = {
+            key: value
+            for key, value in body.items()
+            if key not in {"source_label", "replace", "sync_codex"}
+        }
+        if passthrough:
+            import_payload = passthrough
+
+    if import_payload is None:
+        return jsonify({
+            "success": False,
+            "error": "Provide profiles_json, payload, or profiles to import.",
+        }), 400
+
+    try:
+        summary = ManagedOpenClawProfileStore.import_profiles(
+            import_payload,
+            source_label=source_label,
+            replace=replace,
+        )
+    except ValueError as exc:
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 400
+
+    bridge = get_bridge()
+    synced_cred = None
+    if sync_codex and summary.get("codex_profile_present"):
+        synced_cred = bridge.sync(auto_refresh=True)
+
+    return jsonify({
+        "success": True,
+        "message": "OpenClaw profiles imported into MiroClaw.",
+        "data": {
+            "import_summary": summary,
+            "codex_synced": synced_cred is not None,
+            "bridge": bridge.status(),
+            "providers_total": len(bridge.discover_providers()),
+        },
+    })
+
+
+@auth_bp.route("/openclaw/import", methods=["DELETE"])
+def openclaw_import_clear():
+    """Clear MiroClaw-managed OpenClaw imports from backend storage."""
+    from ..services.managed_openclaw_store import ManagedOpenClawProfileStore
+    from ..services.openclaw_bridge import OPENCLAW_CODEX_CREDENTIAL_ID, get_bridge
+
+    body = request.get_json(silent=True) or {}
+    clear_synced_codex = bool(body.get("clear_synced_codex", True))
+
+    bridge = get_bridge()
+    bridge_status_before = bridge.status()
+    cleared = ManagedOpenClawProfileStore.clear()
+    removed_credential = False
+    if clear_synced_codex and bridge_status_before.get("profile_source") == "managed":
+        removed_credential = CredentialStore.delete(OPENCLAW_CODEX_CREDENTIAL_ID)
+
+    return jsonify({
+        "success": True,
+        "message": "Managed OpenClaw imports cleared.",
+        "data": {
+            "cleared": cleared,
+            "removed_synced_codex": removed_credential,
+            "bridge": bridge.status(),
+            "providers_total": len(bridge.discover_providers()),
+        },
+    })
 
 
 @auth_bp.route("/openclaw/providers", methods=["GET"])
@@ -777,6 +990,9 @@ def openclaw_providers():
             "supported_models": p["provider_info"]["supported_models"],
             "compat_mode": p["provider_info"]["compat_mode"],
             "notes": p["provider_info"]["notes"],
+            "source": p.get("source"),
+            "source_label": p.get("source_label"),
+            "source_path": p.get("source_path"),
         }
 
         # Add expiry info for OAuth tokens
@@ -844,8 +1060,8 @@ def _openclaw_recommendation(providers: list) -> str:
     available = [p for p in providers if p["has_credential"]]
     if not available:
         return (
-            "No OpenClaw provider profiles found. Ensure OpenClaw is installed "
-            "and you have configured at least one provider via the OpenClaw UI."
+            "No OpenClaw provider profiles found. Import auth-profiles.json from the remote OpenClaw machine, "
+            "or ensure OpenClaw is installed locally and has at least one configured provider."
         )
     names = [p["provider"] for p in available]
     if Config.MODELING_BACKEND == "openclaw":
